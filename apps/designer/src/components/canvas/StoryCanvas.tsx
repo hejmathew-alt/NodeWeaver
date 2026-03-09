@@ -1,14 +1,22 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import {
   ReactFlow,
   Background,
   Controls,
   MiniMap,
   BackgroundVariant,
+  applyNodeChanges,
+  applyEdgeChanges,
+  useNodesState,
+  useEdgesState,
   type Node,
   type Edge,
+  type OnNodesChange,
+  type OnEdgesChange,
+  type OnConnect,
+  type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { VRNStory } from '@void-runner/engine';
@@ -16,6 +24,8 @@ import { StoryNode } from './nodes/StoryNode';
 import { CombatNode } from './nodes/CombatNode';
 import { ChatNode } from './nodes/ChatNode';
 import { TwistNode } from './nodes/TwistNode';
+import { CanvasToolbar } from './CanvasToolbar';
+import { NodeEditorPanel } from '@/components/panels/NodeEditorPanel';
 import { useStoryStore } from '@/store/story';
 
 const nodeTypes = {
@@ -34,8 +44,6 @@ function storyToFlow(story: VRNStory): { nodes: Node[]; edges: Edge[] } {
     id: n.id,
     type: n.type,
     position: n.position,
-    // Cast to satisfy React Flow's Record<string, unknown> data constraint;
-    // individual node components cast back to VRNNode via `data as unknown as VRNNode`
     data: n as unknown as Record<string, unknown>,
   }));
 
@@ -60,11 +68,67 @@ function storyToFlow(story: VRNStory): { nodes: Node[]; edges: Edge[] } {
 }
 
 export function StoryCanvas({ story }: StoryCanvasProps) {
-  const setSelectedNode = useStoryStore((s) => s.setSelectedNode);
-  const { nodes, edges } = storyToFlow(story);
+  const {
+    selectedNodeId,
+    setSelectedNode,
+    deleteNode,
+    connectNodes,
+    updateNodePosition,
+  } = useStoryStore();
+
+  const { nodes: initialNodes, edges: initialEdges } = storyToFlow(story);
+  const [nodes, setNodes] = useNodesState(initialNodes);
+  const [edges, setEdges] = useEdgesState(initialEdges);
+
+  // Re-sync RF state whenever the story changes externally (new node, delete, etc.)
+  useEffect(() => {
+    const { nodes: newNodes, edges: newEdges } = storyToFlow(story);
+    setNodes(newNodes);
+    setEdges(newEdges);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [story.nodes]);
+
+  // Keyboard delete
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        deleteNode(selectedNodeId);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedNodeId, deleteNode]);
+
+  const onNodesChange: OnNodesChange = useCallback(
+    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    [setNodes]
+  );
+
+  const onEdgesChange: OnEdgesChange = useCallback(
+    (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    [setEdges]
+  );
+
+  const onConnect: OnConnect = useCallback(
+    (connection) => {
+      if (connection.source && connection.target) {
+        connectNodes(connection.source, connection.target);
+      }
+    },
+    [connectNodes]
+  );
+
+  const onNodeDragStop: OnNodeDrag = useCallback(
+    (_, node) => {
+      updateNodePosition(node.id, node.position.x, node.position.y);
+    },
+    [updateNodePosition]
+  );
 
   const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
+    (_e: React.MouseEvent, node: Node) => {
       setSelectedNode(node.id);
     },
     [setSelectedNode]
@@ -75,39 +139,48 @@ export function StoryCanvas({ story }: StoryCanvasProps) {
   }, [setSelectedNode]);
 
   return (
-    <div className="h-full w-full">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodeClick={onNodeClick}
-        onPaneClick={onPaneClick}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background
-          variant={BackgroundVariant.Dots}
-          bgColor="#030712"
-          color="#1e293b"
-          gap={24}
-          size={1.5}
-        />
-        <Controls className="!border-slate-700 !bg-slate-900 !text-slate-300" />
-        <MiniMap
-          nodeColor={(n) => {
-            switch (n.type) {
-              case 'story': return '#3b82f6';
-              case 'combat': return '#ef4444';
-              case 'chat': return '#22c55e';
-              case 'twist': return '#a855f7';
-              default: return '#64748b';
-            }
-          }}
-          maskColor="rgba(3,7,18,0.8)"
-          className="!border-slate-700 !bg-slate-900"
-        />
-      </ReactFlow>
+    <div className="flex h-full w-full flex-col">
+      <CanvasToolbar />
+      <div className="flex flex-1 overflow-hidden">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onNodeDragStop={onNodeDragStop}
+          onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
+          deleteKeyCode={null}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            bgColor="#030712"
+            color="#1e293b"
+            gap={24}
+            size={1.5}
+          />
+          <Controls className="!border-slate-700 !bg-slate-900 !text-slate-300" />
+          <MiniMap
+            nodeColor={(n) => {
+              switch (n.type) {
+                case 'story': return '#3b82f6';
+                case 'combat': return '#ef4444';
+                case 'chat': return '#22c55e';
+                case 'twist': return '#a855f7';
+                default: return '#64748b';
+              }
+            }}
+            maskColor="rgba(3,7,18,0.8)"
+            className="!border-slate-700 !bg-slate-900"
+          />
+        </ReactFlow>
+        {selectedNodeId && <NodeEditorPanel />}
+      </div>
     </div>
   );
 }

@@ -1,16 +1,19 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useStoryStore } from '@/store/story';
 import { StoryCanvas } from '@/components/canvas/StoryCanvas';
+import { exportStoryToVRN } from '@/lib/export';
 
 export default function StoryEditorPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
 
-  const { activeStory, loadStory } = useStoryStore();
+  const { activeStory, loadStory, updateMetadata } = useStoryStore();
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
 
   useEffect(() => {
     loadStory(id);
@@ -50,29 +53,51 @@ export default function StoryEditorPage() {
             ← Stories
           </button>
           <span className="text-slate-600">/</span>
-          <span className="text-sm font-medium text-white">
-            {activeStory.metadata.title || 'Untitled Story'}
-          </span>
+
+          {editingTitle ? (
+            <input
+              autoFocus
+              className="rounded bg-slate-800 px-2 py-0.5 text-sm font-medium text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={() => {
+                updateMetadata({ title: titleDraft.trim() || 'Untitled Story' });
+                setEditingTitle(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+                if (e.key === 'Escape') setEditingTitle(false);
+              }}
+            />
+          ) : (
+            <button
+              className="rounded px-1 text-sm font-medium text-white hover:bg-slate-800"
+              onClick={() => {
+                setTitleDraft(activeStory.metadata.title || '');
+                setEditingTitle(true);
+              }}
+            >
+              {activeStory.metadata.title || 'Untitled Story'}
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <span>{activeStory.nodes.length} nodes</span>
-          <span>·</span>
-          <span>{activeStory.metadata.genre}</span>
+
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">
+            {activeStory.nodes.length} nodes · {activeStory.metadata.genre}
+          </span>
+          <button
+            className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 hover:text-white"
+            onClick={() => exportStoryToVRN(activeStory)}
+          >
+            Export .vrn
+          </button>
         </div>
       </header>
 
       {/* Canvas */}
       <div className="flex-1 overflow-hidden">
-        {activeStory.nodes.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <p className="text-lg text-slate-400">Canvas is empty</p>
-            <p className="text-sm text-slate-600">
-              Node creation coming in the next session.
-            </p>
-          </div>
-        ) : (
-          <StoryCanvas story={activeStory} />
-        )}
+        <StoryCanvas story={activeStory} />
       </div>
     </div>
   );
