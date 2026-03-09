@@ -1,0 +1,12 @@
+{
+  "name": "void-runner-designer",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter designer dev",
+    "build": "pnpm --filter designer build",
+    "lint": "pnpm --filter designer lint"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

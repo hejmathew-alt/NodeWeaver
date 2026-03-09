@@ -1,0 +1,194 @@
+// ============================================================
+// VRN — Void Runner Narrative format
+// Source of truth for all schema shared between the designer
+// app and the game engine runtime.
+// ============================================================
+
+export type NodeType = 'story' | 'combat' | 'chat' | 'twist';
+export type NodeStatus = 'draft' | 'complete' | 'needs-work';
+export type StatType = 'str' | 'wit' | 'charm' | 'neutral';
+export type GenreSlug =
+  | 'sci-fi'
+  | 'fantasy'
+  | 'horror'
+  | 'mystery-noir'
+  | 'post-apocalyptic'
+  | 'cyberpunk'
+  | 'custom';
+
+// ------------------------------------------------------------
+// Choices
+// ------------------------------------------------------------
+
+export interface VRNEffects {
+  str?: number;
+  wit?: number;
+  charm?: number;
+  /** Sets state.flags[flag] = true */
+  flag?: string;
+}
+
+export interface VRNRequirement {
+  str?: number;
+  wit?: number;
+  charm?: number;
+  /** Choice only visible if state.flags[flag] is truthy */
+  flag?: string;
+}
+
+export interface VRNCombat {
+  /** Key into VRNStory.enemies */
+  enemy: string;
+  phase: number;
+}
+
+export interface VRNEnding {
+  title: string;
+  text: string;
+}
+
+export interface VRNChoice {
+  id: string;
+  /** Button text shown to the player */
+  label: string;
+  /** Brief narrative beat shown on canvas edge (designer only) */
+  flavour?: string;
+  type: StatType;
+  /** ID of the next VRNNode */
+  next?: string;
+  /** Intermediate consequence screen text */
+  consequence?: string;
+  positiveConsequence?: boolean;
+  effects?: VRNEffects;
+  requires?: VRNRequirement;
+  /** Triggers a combat encounter instead of a scene transition */
+  combat?: VRNCombat;
+  /** Flags this choice as starting an AI chat session */
+  echoInit?: boolean;
+  /** Opening message from the AI character */
+  echoOpening?: string;
+  /** Inline ending — bypasses scene transition */
+  ending?: VRNEnding;
+}
+
+// ------------------------------------------------------------
+// Nodes
+// ------------------------------------------------------------
+
+export interface VRNNode {
+  // --- Engine fields (consumed by the VRN runtime player) ---
+  id: string;
+  type: NodeType;
+  /** "Location · Sublocation" header */
+  location?: string;
+  /** Scene headline */
+  title?: string;
+  /** Main narrative text (HTML allowed) */
+  body: string;
+  choices: VRNChoice[];
+
+  // --- Designer + engine metadata ---
+  /** Character slug (key into VRNStory.characters) */
+  character?: string;
+  mood?: string;
+  status: NodeStatus;
+  /** Rendered audio clip filenames: node_{id}_{character_slug}.mp3 */
+  audio: string[];
+  /**
+   * Lane membership:
+   *   []          = no lane
+   *   ['lane-id'] = hard lane (belongs to one arc)
+   *   ['a', 'b']  = soft lane (shared beat across arcs)
+   */
+  lanes: string[];
+
+  // --- Canvas layout (stripped on engine export) ---
+  position: { x: number; y: number };
+}
+
+// ------------------------------------------------------------
+// Characters
+// ------------------------------------------------------------
+
+export interface VRNCharacter {
+  id: string;
+  name: string;
+  /** e.g. "ECHO — ship AI" */
+  role: string;
+  backstory: string;
+  /** Tone, speech patterns, quirks */
+  traits: string;
+  elevenLabsVoiceId?: string;
+}
+
+// ------------------------------------------------------------
+// Swim lanes
+// ------------------------------------------------------------
+
+export interface VRNLane {
+  id: string;
+  name: string;
+  /** CSS hex colour — used for canvas tint and node border */
+  colour: string;
+  /** Tone, stakes, emotional register — fed to AI */
+  description: string;
+  /** Informational only; not enforced by engine */
+  entryCondition?: string;
+}
+
+// ------------------------------------------------------------
+// Enemies (combat)
+// ------------------------------------------------------------
+
+export interface VRNEnemy {
+  name: string;
+  hp: number;
+  /** [min, max] damage per hit */
+  damage: [number, number];
+  /** ASCII art display string */
+  art: string;
+  taunts: string[];
+}
+
+// ------------------------------------------------------------
+// Top-level story file
+// ------------------------------------------------------------
+
+export interface VRNStoryMetadata {
+  title: string;
+  genre: GenreSlug;
+  /** Only used when genre === 'custom'; injected verbatim into AI prompts */
+  customGenreBrief?: string;
+  logline: string;
+  targetTone: string;
+  coverColour?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VRNStory {
+  version: '1.0';
+  id: string;
+  metadata: VRNStoryMetadata;
+  nodes: VRNNode[];
+  characters: VRNCharacter[];
+  lanes: VRNLane[];
+  enemies: Record<string, VRNEnemy>;
+}
+
+// ------------------------------------------------------------
+// Runtime player state (used by the VRN engine, not the designer)
+// ------------------------------------------------------------
+
+export interface VRNPlayerState {
+  str: number;
+  wit: number;
+  charm: number;
+  hp: number;
+  chapter: number;
+  flags: Record<string, boolean>;
+  gamePhase: 'scene' | 'combat' | 'echo-chat';
+  echoMemory: Array<{ role: 'user' | 'assistant'; content: string }>;
+  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
+  postEchoNodeId: string | null;
+}
