@@ -19,7 +19,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@void-runner/engine": ["../../packages/engine/src/index.ts"],
+      "@void-runner/engine/*": ["../../packages/engine/src/*"]
     }
   },
   "include": [

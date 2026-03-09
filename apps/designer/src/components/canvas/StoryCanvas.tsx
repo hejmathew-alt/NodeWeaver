@@ -9,8 +9,6 @@ import {
   BackgroundVariant,
   type Node,
   type Edge,
-  type OnNodesChange,
-  type OnEdgesChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { VRNStory } from '@void-runner/engine';
@@ -36,7 +34,9 @@ function storyToFlow(story: VRNStory): { nodes: Node[]; edges: Edge[] } {
     id: n.id,
     type: n.type,
     position: n.position,
-    data: n,
+    // Cast to satisfy React Flow's Record<string, unknown> data constraint;
+    // individual node components cast back to VRNNode via `data as unknown as VRNNode`
+    data: n as unknown as Record<string, unknown>,
   }));
 
   const edges: Edge[] = [];
