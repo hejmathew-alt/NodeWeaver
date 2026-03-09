@@ -44,20 +44,20 @@ export default function StoryEditorPage() {
   return (
     <div className="flex h-screen flex-col">
       {/* Top bar */}
-      <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950 px-4 py-2">
+      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex items-center gap-3">
           <button
-            className="text-sm text-slate-400 hover:text-white"
+            className="text-sm text-slate-500 hover:text-slate-900"
             onClick={() => router.push('/')}
           >
             ← Stories
           </button>
-          <span className="text-slate-600">/</span>
+          <span className="text-slate-300">/</span>
 
           {editingTitle ? (
             <input
               autoFocus
-              className="rounded bg-slate-800 px-2 py-0.5 text-sm font-medium text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="rounded bg-slate-100 px-2 py-0.5 text-sm font-medium text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
               onBlur={() => {
@@ -71,7 +71,7 @@ export default function StoryEditorPage() {
             />
           ) : (
             <button
-              className="rounded px-1 text-sm font-medium text-white hover:bg-slate-800"
+              className="rounded px-1 text-sm font-medium text-slate-900 hover:bg-slate-100"
               onClick={() => {
                 setTitleDraft(activeStory.metadata.title || '');
                 setEditingTitle(true);
@@ -83,11 +83,11 @@ export default function StoryEditorPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-slate-400">
             {activeStory.nodes.length} nodes · {activeStory.metadata.genre}
           </span>
           <button
-            className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700 hover:text-white"
+            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900"
             onClick={() => exportStoryToVRN(activeStory)}
           >
             Export .vrn

@@ -19,7 +19,7 @@ export function CanvasToolbar() {
   const createNode = useStoryStore((s) => s.createNode);
 
   return (
-    <div className="flex items-center gap-1 border-b border-slate-800 bg-slate-950 px-3 py-1.5">
+    <div className="flex items-center gap-1 border-b border-slate-200 bg-white px-3 py-1.5">
       {NODE_BUTTONS.map(({ type, label, colour, hoverBg }) => (
         <button
           key={type}

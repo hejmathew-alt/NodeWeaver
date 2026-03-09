@@ -7,7 +7,7 @@ export function ChatNode({ data, selected }: NodeProps) {
   const node = data as unknown as VRNNode;
   return (
     <div
-      className={`min-w-[200px] max-w-[280px] rounded-lg bg-slate-900 p-3 text-sm shadow-lg transition-shadow ${
+      className={`min-w-[200px] max-w-[280px] rounded-lg bg-white p-3 text-sm shadow-md transition-shadow ${
         selected ? 'ring-2 ring-green-400' : ''
       }`}
       style={{ border: '2px solid #22c55e' }}
@@ -19,15 +19,15 @@ export function ChatNode({ data, selected }: NodeProps) {
           Chat
         </span>
         {node.status && (
-          <span className="text-xs text-slate-400">{node.status}</span>
+          <span className="text-xs text-slate-500">{node.status}</span>
         )}
       </div>
 
       {node.title && (
-        <p className="mb-1 font-semibold text-white">{node.title}</p>
+        <p className="mb-1 font-semibold text-slate-900">{node.title}</p>
       )}
-      <p className="line-clamp-3 text-slate-300">
-        {node.body || <em className="text-slate-500">No content yet</em>}
+      <p className="line-clamp-3 text-slate-600">
+        {node.body || <em className="text-slate-400">No content yet</em>}
       </p>
 
       <Handle type="source" position={Position.Bottom} className="!bg-green-400" />

@@ -40,11 +40,11 @@ function ChoiceCard({
   const up = (patch: Partial<VRNChoice>) => updateChoice(nodeId, choice.id, patch);
 
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-800/60">
+    <div className="rounded-lg border border-slate-200 bg-slate-50">
       {/* Choice header row */}
       <div className="flex items-center gap-2 px-3 py-2">
         <button
-          className="shrink-0 text-slate-500 hover:text-slate-300"
+          className="shrink-0 text-slate-400 hover:text-slate-700"
           onClick={() => setExpanded((x) => !x)}
           aria-label="Toggle choice"
         >
@@ -52,7 +52,7 @@ function ChoiceCard({
         </button>
 
         <input
-          className="min-w-0 flex-1 bg-transparent text-sm text-white placeholder-slate-500 focus:outline-none"
+          className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 placeholder-slate-400 focus:outline-none"
           placeholder="Choice label…"
           value={choice.label}
           onChange={(e) => up({ label: e.target.value })}
@@ -60,7 +60,7 @@ function ChoiceCard({
 
         {/* Stat type pill */}
         <select
-          className="rounded bg-slate-700 px-1.5 py-0.5 text-xs text-slate-300 focus:outline-none"
+          className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-600 focus:outline-none"
           value={choice.type}
           onChange={(e) => up({ type: e.target.value as StatType })}
         >
@@ -70,7 +70,7 @@ function ChoiceCard({
         </select>
 
         <button
-          className="shrink-0 text-slate-600 hover:text-red-400"
+          className="shrink-0 text-slate-400 hover:text-red-500"
           onClick={() => deleteChoice(nodeId, choice.id)}
           aria-label="Delete choice"
         >
@@ -80,12 +80,12 @@ function ChoiceCard({
 
       {/* Expanded fields */}
       {expanded && (
-        <div className="border-t border-slate-700 px-3 py-3 space-y-3">
+        <div className="border-t border-slate-200 px-3 py-3 space-y-3">
           {/* Next node */}
           <div>
-            <label className="mb-1 block text-xs text-slate-500">Next node</label>
+            <label className="mb-1 block text-xs text-slate-400">Next node</label>
             <select
-              className="w-full rounded bg-slate-700 px-2 py-1.5 text-sm text-white focus:outline-none"
+              className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 focus:outline-none"
               value={choice.next ?? ''}
               onChange={(e) => up({ next: e.target.value || undefined })}
             >
@@ -100,9 +100,9 @@ function ChoiceCard({
 
           {/* Flavour */}
           <div>
-            <label className="mb-1 block text-xs text-slate-500">Flavour text</label>
+            <label className="mb-1 block text-xs text-slate-400">Flavour text</label>
             <input
-              className="w-full rounded bg-slate-700 px-2 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none"
+              className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none"
               placeholder="Brief beat shown on canvas edge…"
               value={choice.flavour ?? ''}
               onChange={(e) => up({ flavour: e.target.value || undefined })}
@@ -111,16 +111,16 @@ function ChoiceCard({
 
           {/* Consequence */}
           <div>
-            <label className="mb-1 block text-xs text-slate-500">Consequence</label>
+            <label className="mb-1 block text-xs text-slate-400">Consequence</label>
             <textarea
               rows={2}
-              className="w-full resize-none rounded bg-slate-700 px-2 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none"
+              className="w-full resize-none rounded border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none"
               placeholder="Shown between choice and next scene…"
               value={choice.consequence ?? ''}
               onChange={(e) => up({ consequence: e.target.value || undefined })}
             />
             {choice.consequence && (
-              <label className="mt-1 flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+              <label className="mt-1 flex cursor-pointer items-center gap-2 text-xs text-slate-500">
                 <input
                   type="checkbox"
                   checked={choice.positiveConsequence ?? false}
@@ -159,11 +159,11 @@ export function NodeEditorPanel() {
 
   return (
     <aside
-      className="flex h-full w-80 shrink-0 flex-col border-l border-slate-800 bg-slate-950"
+      className="flex h-full w-80 shrink-0 flex-col border-l border-slate-200 bg-white"
       style={{ borderLeftColor: `${colour}44` }}
     >
       {/* Panel header */}
-      <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
+      <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
         <span
           className="rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white"
           style={{ backgroundColor: colour }}
@@ -172,13 +172,13 @@ export function NodeEditorPanel() {
         </span>
         <span className="flex-1 truncate font-mono text-xs text-slate-500">{node.id.slice(0, 8)}…</span>
         <button
-          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-900/30"
+          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
           onClick={() => deleteNode(selectedNodeId)}
         >
           Delete
         </button>
         <button
-          className="ml-1 text-slate-500 hover:text-white"
+          className="ml-1 text-slate-400 hover:text-slate-900"
           onClick={() => setSelectedNode(null)}
           aria-label="Close panel"
         >
@@ -187,13 +187,13 @@ export function NodeEditorPanel() {
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-white">
 
         {/* Title */}
         <div>
-          <label className="mb-1 block text-xs text-slate-500">Title</label>
+          <label className="mb-1 block text-xs text-slate-400">Title</label>
           <input
-            className="w-full rounded bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-1"
+            className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1"
             style={{ '--tw-ring-color': colour } as React.CSSProperties}
             placeholder="Scene title…"
             value={node.title ?? ''}
@@ -203,9 +203,9 @@ export function NodeEditorPanel() {
 
         {/* Location */}
         <div>
-          <label className="mb-1 block text-xs text-slate-500">Location</label>
+          <label className="mb-1 block text-xs text-slate-400">Location</label>
           <input
-            className="w-full rounded bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-1"
+            className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1"
             style={{ '--tw-ring-color': colour } as React.CSSProperties}
             placeholder="Station · Sector"
             value={node.location ?? ''}
@@ -215,10 +215,10 @@ export function NodeEditorPanel() {
 
         {/* Body */}
         <div>
-          <label className="mb-1 block text-xs text-slate-500">Body</label>
+          <label className="mb-1 block text-xs text-slate-400">Body</label>
           <textarea
             rows={6}
-            className="w-full resize-none rounded bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-1"
+            className="w-full resize-none rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1"
             style={{ '--tw-ring-color': colour } as React.CSSProperties}
             placeholder="Narrative text shown to the player…"
             value={node.body}
@@ -229,18 +229,18 @@ export function NodeEditorPanel() {
         {/* Mood + Status row */}
         <div className="flex gap-3">
           <div className="flex-1">
-            <label className="mb-1 block text-xs text-slate-500">Mood</label>
+            <label className="mb-1 block text-xs text-slate-400">Mood</label>
             <input
-              className="w-full rounded bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none"
+              className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none"
               placeholder="tense, calm…"
               value={node.mood ?? ''}
               onChange={(e) => up({ mood: e.target.value || undefined })}
             />
           </div>
           <div className="flex-1">
-            <label className="mb-1 block text-xs text-slate-500">Status</label>
+            <label className="mb-1 block text-xs text-slate-400">Status</label>
             <select
-              className="w-full rounded bg-slate-800 px-3 py-2 text-sm text-white focus:outline-none"
+              className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:outline-none"
               value={node.status}
               onChange={(e) => up({ status: e.target.value as NodeStatus })}
             >
@@ -253,9 +253,9 @@ export function NodeEditorPanel() {
 
         {/* Character */}
         <div>
-          <label className="mb-1 block text-xs text-slate-500">Character</label>
+          <label className="mb-1 block text-xs text-slate-400">Character</label>
           <input
-            className="w-full rounded bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none"
+            className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none"
             placeholder="character-slug"
             value={node.character ?? ''}
             onChange={(e) => up({ character: e.target.value || undefined })}
@@ -263,13 +263,13 @@ export function NodeEditorPanel() {
         </div>
 
         {/* Divider */}
-        <div className="border-t border-slate-800 pt-2">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <div className="border-t border-slate-200 pt-2">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
             Choices ({node.choices.length})
           </p>
 
           {node.choices.length === 0 && (
-            <p className="mb-3 text-xs text-slate-600">
+            <p className="mb-3 text-xs text-slate-400">
               No choices yet. Add one or drag from a handle to connect nodes.
             </p>
           )}
@@ -286,7 +286,7 @@ export function NodeEditorPanel() {
           </div>
 
           <button
-            className="mt-3 w-full rounded border border-slate-700 py-2 text-xs text-slate-400 transition hover:border-slate-500 hover:text-white"
+            className="mt-3 w-full rounded border border-slate-300 py-2 text-xs text-slate-500 transition hover:border-slate-400 hover:text-slate-900"
             onClick={() => addChoice(selectedNodeId)}
           >
             + Add Choice

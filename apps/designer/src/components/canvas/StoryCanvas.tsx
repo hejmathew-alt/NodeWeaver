@@ -159,12 +159,12 @@ export function StoryCanvas({ story }: StoryCanvasProps) {
         >
           <Background
             variant={BackgroundVariant.Dots}
-            bgColor="#030712"
-            color="#1e293b"
+            bgColor="#f8fafc"
+            color="#cbd5e1"
             gap={24}
             size={1.5}
           />
-          <Controls className="!border-slate-700 !bg-slate-900 !text-slate-300" />
+          <Controls className="!border-slate-200 !bg-white !text-slate-600" />
           <MiniMap
             nodeColor={(n) => {
               switch (n.type) {
@@ -175,8 +175,8 @@ export function StoryCanvas({ story }: StoryCanvasProps) {
                 default: return '#64748b';
               }
             }}
-            maskColor="rgba(3,7,18,0.8)"
-            className="!border-slate-700 !bg-slate-900"
+            maskColor="rgba(248,250,252,0.8)"
+            className="!border-slate-200 !bg-white"
           />
         </ReactFlow>
         {selectedNodeId && <NodeEditorPanel />}
