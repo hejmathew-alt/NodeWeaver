@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { TTSProvider } from '@void-runner/engine';
+import type { TTSProvider } from '@nodeweaver/engine';
 import { useSettingsStore, type CanvasTextSize } from '@/lib/settings';
 import { useStoryStore } from '@/store/story';
 

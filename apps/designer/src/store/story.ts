@@ -1,22 +1,22 @@
 import { create } from 'zustand';
 import { nanoid } from 'nanoid';
 import type {
-  VRNStory,
-  VRNNode,
-  VRNBlock,
-  VRNChoice,
-  VRNCharacter,
-  VRNScriptLine,
-  VRNStoryMetadata,
+  NWVStory,
+  NWVNode,
+  NWVBlock,
+  NWVChoice,
+  NWVCharacter,
+  NWVScriptLine,
+  NWVStoryMetadata,
   NodeType,
-} from '@void-runner/engine';
+} from '@nodeweaver/engine';
 import { db } from '@/lib/db';
 import { saveFileAs, saveFile } from '@/lib/export';
 import { deriveBody, migrateNodeToBlocks } from '@/lib/blocks';
 
 // ── Narrator default ─────────────────────────────────────────────────────────
 
-export const NARRATOR_DEFAULT: VRNCharacter = {
+export const NARRATOR_DEFAULT: NWVCharacter = {
   id: 'narrator',
   name: 'Narrator',
   role: 'Omniscient story narrator',
@@ -28,7 +28,7 @@ export const NARRATOR_DEFAULT: VRNCharacter = {
   voiceLocked: false,
 };
 
-function ensureNarrator(characters: VRNCharacter[]): VRNCharacter[] {
+function ensureNarrator(characters: NWVCharacter[]): NWVCharacter[] {
   if (characters.some((c) => c.id === 'narrator')) return characters;
   return [NARRATOR_DEFAULT, ...characters];
 }
@@ -36,7 +36,7 @@ function ensureNarrator(characters: VRNCharacter[]): VRNCharacter[] {
 // ── Store interface ──────────────────────────────────────────────────────────
 
 interface StoryStore {
-  activeStory: VRNStory | null;
+  activeStory: NWVStory | null;
   selectedNodeId: string | null;
   selectedPanel: 'character' | 'settings' | null;
   selectedCharacterId: string | null;
@@ -54,7 +54,7 @@ interface StoryStore {
   setSelectedCharacter: (id: string | null) => void;
 
   // Node CRUD
-  updateNode: (nodeId: string, patch: Partial<VRNNode>) => Promise<void>;
+  updateNode: (nodeId: string, patch: Partial<NWVNode>) => Promise<void>;
   createNode: (type: NodeType, position?: { x: number; y: number }) => string;
   deleteNode: (nodeId: string) => void;
   updateNodePosition: (nodeId: string, x: number, y: number) => void;
@@ -62,46 +62,51 @@ interface StoryStore {
 
   // Choice CRUD
   addChoice: (nodeId: string) => string;
-  updateChoice: (nodeId: string, choiceId: string, patch: Partial<VRNChoice>) => void;
+  updateChoice: (nodeId: string, choiceId: string, patch: Partial<NWVChoice>) => void;
   deleteChoice: (nodeId: string, choiceId: string) => void;
 
   // Connect two nodes (creates a choice on source pointing to target)
   connectNodes: (sourceNodeId: string, targetNodeId: string) => void;
+
+  // Insert a new node between two connected nodes (splits the edge)
+  insertNodeBetween: (sourceId: string, targetId: string, type: NodeType) => string;
 
   // Node sizing
   updateNodeSize: (nodeId: string, width: number, height: number) => void;
 
   // Script line CRUD (deprecated — use block actions; kept for legacy)
   addLine: (nodeId: string, characterId?: string) => void;
-  updateLine: (nodeId: string, lineId: string, patch: Partial<Omit<VRNScriptLine, 'id'>>) => void;
+  updateLine: (nodeId: string, lineId: string, patch: Partial<Omit<NWVScriptLine, 'id'>>) => void;
   deleteLine: (nodeId: string, lineId: string) => void;
   moveLine: (nodeId: string, lineId: string, dir: 'up' | 'down') => void;
 
   // Block CRUD
   addBlock: (nodeId: string, type: 'prose' | 'line', defaultCharId?: string) => void;
-  updateBlock: (nodeId: string, blockId: string, patch: Partial<Omit<VRNBlock, 'id' | 'type'>>) => void;
+  updateBlock: (nodeId: string, blockId: string, patch: Partial<Omit<NWVBlock, 'id' | 'type'>>) => void;
   deleteBlock: (nodeId: string, blockId: string) => void;
   moveBlock: (nodeId: string, blockId: string, dir: 'up' | 'down') => void;
+  reorderBlock: (nodeId: string, blockId: string, newIndex: number) => void;
+  moveBlockBetweenNodes: (sourceNodeId: string, blockId: string, targetNodeId: string, insertIndex: number) => void;
 
   // Character CRUD
   addCharacter: () => void;
-  updateCharacter: (id: string, patch: Partial<VRNCharacter>) => void;
+  updateCharacter: (id: string, patch: Partial<NWVCharacter>) => void;
   deleteCharacter: (id: string) => void;
 
   // Metadata
-  updateMetadata: (patch: Partial<VRNStoryMetadata>) => void;
+  updateMetadata: (patch: Partial<NWVStoryMetadata>) => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function stamp(story: VRNStory): VRNStory {
+function stamp(story: NWVStory): NWVStory {
   return {
     ...story,
     metadata: { ...story.metadata, updatedAt: new Date().toISOString() },
   };
 }
 
-async function persist(story: VRNStory) {
+async function persist(story: NWVStory) {
   await db.stories.put(story);
 }
 
@@ -121,7 +126,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     if (!story) return;
     // Ensure Narrator always exists
     // Migrate any nodes that don't yet have blocks[]
-    const patched: VRNStory = {
+    const patched: NWVStory = {
       ...story,
       characters: ensureNarrator(story.characters),
       nodes: story.nodes.map(migrateNodeToBlocks),
@@ -210,7 +215,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
       x: 380 + Math.random() * 160 - 80,
       y: 260 + Math.random() * 160 - 80,
     };
-    const node: VRNNode = {
+    const node: NWVNode = {
       id,
       type,
       title: '',
@@ -235,6 +240,8 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   deleteNode: (nodeId) => {
     const { activeStory, selectedNodeId } = get();
     if (!activeStory) return;
+    const target = activeStory.nodes.find((n) => n.id === nodeId);
+    if (target?.locked) return;
     const updated = stamp({
       ...activeStory,
       nodes: activeStory.nodes
@@ -287,7 +294,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     const { activeStory } = get();
     if (!activeStory) return '';
     const choiceId = crypto.randomUUID();
-    const blank: VRNChoice = {
+    const blank: NWVChoice = {
       id: choiceId,
       label: '',
       type: 'neutral',
@@ -350,6 +357,55 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     updateChoice(sourceNodeId, choiceId, { next: targetNodeId });
   },
 
+  // ── Insert between ──────────────────────────────────────────────────────────
+
+  insertNodeBetween: (sourceId, targetId, type) => {
+    const { activeStory } = get();
+    if (!activeStory) return '';
+    const source = activeStory.nodes.find((n) => n.id === sourceId);
+    const target = activeStory.nodes.find((n) => n.id === targetId);
+    if (!source || !target) return '';
+
+    const id = crypto.randomUUID();
+    const pos = {
+      x: (source.position.x + target.position.x) / 2,
+      y: (source.position.y + target.position.y) / 2,
+    };
+    const newNode: NWVNode = {
+      id,
+      type,
+      title: '',
+      location: '',
+      body: '',
+      blocks: [],
+      choices: [{ id: crypto.randomUUID(), label: '', type: 'neutral', next: targetId }],
+      status: 'draft',
+      audio: [],
+      lanes: [],
+      position: pos,
+    };
+
+    // Rewire: source's choice that pointed to target now points to newNode
+    const updated = stamp({
+      ...activeStory,
+      nodes: [
+        ...activeStory.nodes.map((n) => {
+          if (n.id !== sourceId) return n;
+          return {
+            ...n,
+            choices: n.choices.map((c) =>
+              c.next === targetId ? { ...c, next: id } : c
+            ),
+          };
+        }),
+        newNode,
+      ],
+    });
+    set({ activeStory: updated, selectedNodeId: id, selectedPanel: null });
+    persist(updated);
+    return id;
+  },
+
   // ── Node sizing ─────────────────────────────────────────────────────────────
 
   updateNodeSize: (nodeId, width, height) => {
@@ -371,7 +427,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     const { activeStory } = get();
     if (!activeStory) return;
     const lineId = crypto.randomUUID();
-    const blank: VRNScriptLine = { id: lineId, characterId: characterId ?? '', text: '' };
+    const blank: NWVScriptLine = { id: lineId, characterId: characterId ?? '', text: '' };
     const updated = stamp({
       ...activeStory,
       nodes: activeStory.nodes.map((n) =>
@@ -446,7 +502,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
           const lastLine = [...blocks].reverse().find((b) => b.type === 'line');
           charId = lastLine?.characterId ?? '';
         }
-        const blank: VRNBlock = {
+        const blank: NWVBlock = {
           id: nanoid(),
           type,
           text: '',
@@ -512,13 +568,61 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     persist(updated);
   },
 
+  reorderBlock: (nodeId, blockId, newIndex) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const blocks = [...(n.blocks ?? [])];
+        const oldIdx = blocks.findIndex((b) => b.id === blockId);
+        if (oldIdx === -1 || oldIdx === newIndex) return n;
+        const [moved] = blocks.splice(oldIdx, 1);
+        blocks.splice(newIndex, 0, moved);
+        return { ...n, blocks, body: deriveBody(blocks) };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  moveBlockBetweenNodes: (sourceNodeId, blockId, targetNodeId, insertIndex) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const targetNode = activeStory.nodes.find((n) => n.id === targetNodeId);
+    if (targetNode?.locked) return;
+    let movedBlock: NWVBlock | undefined;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id === sourceNodeId) {
+          const blocks = (n.blocks ?? []).filter((b) => {
+            if (b.id === blockId) { movedBlock = b; return false; }
+            return true;
+          });
+          return { ...n, blocks, body: deriveBody(blocks) };
+        }
+        if (n.id === targetNodeId && movedBlock) {
+          const blocks = [...(n.blocks ?? [])];
+          blocks.splice(insertIndex, 0, movedBlock);
+          return { ...n, blocks, body: deriveBody(blocks) };
+        }
+        return n;
+      }),
+    });
+    if (!movedBlock) return;
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
   // ── Character CRUD ──────────────────────────────────────────────────────────
 
   addCharacter: () => {
     const { activeStory } = get();
     if (!activeStory) return;
     const id = `char_${crypto.randomUUID().slice(0, 8)}`;
-    const newChar: VRNCharacter = {
+    const newChar: NWVCharacter = {
       id,
       name: 'New Character',
       role: '',

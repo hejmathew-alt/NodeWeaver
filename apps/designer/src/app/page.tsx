@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { StoryCard } from '@/components/dashboard/StoryCard';
-import type { VRNStory, GenreSlug } from '@void-runner/engine';
+import type { NWVStory, GenreSlug } from '@nodeweaver/engine';
 import { NARRATOR_DEFAULT } from '@/store/story';
 
-function createBlankStory(title: string, genre: GenreSlug): VRNStory {
+function createBlankStory(title: string, genre: GenreSlug): NWVStory {
   return {
     version: '1.0',
     id: `story-${Date.now()}`,
@@ -55,13 +55,13 @@ export default function DashboardPage() {
       if (!file) return;
       try {
         const text = await file.text();
-        const story = JSON.parse(text) as VRNStory;
+        const story = JSON.parse(text) as NWVStory;
         story.id = `story-${Date.now()}-imported`;
         story.metadata.updatedAt = new Date().toISOString();
         await db.stories.add(story);
         router.push(`/story/${story.id}`);
       } catch {
-        alert('Failed to import — invalid .vrn file');
+        alert('Failed to import — invalid .nwv file');
       }
       e.target.value = '';
     },
@@ -74,16 +74,16 @@ export default function DashboardPage() {
       <div className="mb-10 flex items-end justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-            Narrative Designer
+            NodeWeaver
           </h1>
-          <p className="mt-1 text-slate-500">Void Runner story tree editor</p>
+          <p className="mt-1 text-slate-500">Visual story weaving tool</p>
         </div>
         <div className="flex gap-3">
           <label className="cursor-pointer rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 transition hover:border-slate-400 hover:text-slate-900">
-            Import .vrn
+            Import .nwv
             <input
               type="file"
-              accept=".vrn,.json"
+              accept=".nwv,.vrn,.json"
               className="hidden"
               onChange={handleImport}
             />
@@ -104,7 +104,7 @@ export default function DashboardPage() {
         <div className="flex flex-col items-center gap-4 py-24 text-center">
           <p className="text-xl text-slate-500">No stories yet</p>
           <p className="text-slate-500">
-            Create a new story or import a .vrn file to get started.
+            Create a new story or import an .nwv file to get started.
           </p>
         </div>
       ) : (

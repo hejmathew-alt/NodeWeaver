@@ -1,4 +1,4 @@
-import type { VRNNode, VRNBlock } from '@void-runner/engine';
+import type { NWVNode, NWVBlock } from '@nodeweaver/engine';
 import { nanoid } from 'nanoid';
 
 /**
@@ -6,7 +6,7 @@ import { nanoid } from 'nanoid';
  * Joins all prose block texts with double newlines.
  * Used to keep the game engine (which reads scene.text = node.body) working.
  */
-export function deriveBody(blocks: VRNBlock[]): string {
+export function deriveBody(blocks: NWVBlock[]): string {
   return blocks
     .filter((b) => b.type === 'prose')
     .map((b) => b.text)
@@ -17,10 +17,10 @@ export function deriveBody(blocks: VRNBlock[]): string {
  * One-time migration: convert a legacy node (body / useScript+lines) to blocks[].
  * If the node already has blocks, it is returned unchanged.
  */
-export function migrateNodeToBlocks(node: VRNNode): VRNNode {
+export function migrateNodeToBlocks(node: NWVNode): NWVNode {
   if (node.blocks) return node;
 
-  const blocks: VRNBlock[] = [];
+  const blocks: NWVBlock[] = [];
 
   if (node.useScript && node.lines?.length) {
     for (const l of node.lines) {

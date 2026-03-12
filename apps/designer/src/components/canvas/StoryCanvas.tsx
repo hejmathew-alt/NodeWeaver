@@ -22,7 +22,7 @@ import {
   type OnConnectEnd,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { VRNStory, NodeType } from '@void-runner/engine';
+import type { NWVStory, NodeType } from '@nodeweaver/engine';
 import { StoryNode } from './nodes/StoryNode';
 import { CombatNode } from './nodes/CombatNode';
 import { ChatNode } from './nodes/ChatNode';
@@ -34,6 +34,18 @@ import { autoLayout, pushOverlaps } from '@/lib/layout';
 import { NodeEditorPanel } from '@/components/panels/NodeEditorPanel';
 import { CharacterPanel } from '@/components/panels/CharacterPanel';
 import { SettingsPanel } from '@/components/panels/SettingsPanel';
+import {
+  DndContext,
+  DragOverlay,
+  pointerWithin,
+  useSensor,
+  useSensors,
+  PointerSensor,
+  type DragStartEvent,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import type { NWVBlock } from '@nodeweaver/engine';
+import { DragPreview } from './nodes/CanvasBlock';
 import { useStoryStore } from '@/store/story';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -55,10 +67,10 @@ const nodeTypes = {
 // ── storyToFlow ───────────────────────────────────────────────────────────────
 
 interface StoryCanvasProps {
-  story: VRNStory;
+  story: NWVStory;
 }
 
-function storyToFlow(story: VRNStory): { nodes: Node[]; edges: Edge[] } {
+function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = story.nodes.map((n) => ({
     id: n.id,
     type: n.type,
@@ -78,7 +90,8 @@ function storyToFlow(story: VRNStory): { nodes: Node[]; edges: Edge[] } {
           label: choice.flavour ?? '',
           style: { stroke: '#64748b', strokeWidth: 1.5 },
           labelStyle: { fill: '#94a3b8', fontSize: 11 },
-          labelBgStyle: { fill: '#0f172a' },
+          labelBgStyle: { fill: '#f8fafc', fillOpacity: 0.85 },
+          data: { sourceId: node.id, choiceId: choice.id },
         });
       }
     }
@@ -160,6 +173,89 @@ function NodePickerMenu({ screenX, screenY, onPick, onClose }: NodePickerMenuPro
   );
 }
 
+// ── Edge context menu ─────────────────────────────────────────────────────────
+
+interface PendingEdge {
+  sourceId: string;
+  targetId: string;
+  choiceId: string;
+  screenX: number;
+  screenY: number;
+}
+
+interface EdgeContextMenuProps {
+  edge: PendingEdge;
+  onDelete: () => void;
+  onInsert: (type: NodeType) => void;
+  onAddChoice: () => void;
+  onClose: () => void;
+}
+
+function EdgeContextMenu({ edge, onDelete, onInsert, onAddChoice, onClose }: EdgeContextMenuProps) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onMouse = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Element)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    const t = setTimeout(() => {
+      document.addEventListener('mousedown', onMouse);
+      document.addEventListener('keydown', onKey);
+    }, 50);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('mousedown', onMouse);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const left = Math.min(edge.screenX, window.innerWidth - 220);
+  const top = Math.min(edge.screenY, window.innerHeight - 280);
+
+  return (
+    <div
+      ref={ref}
+      style={{ position: 'fixed', left, top, zIndex: 1000 }}
+      className="rounded-lg border border-slate-200 bg-white p-2 shadow-2xl"
+    >
+      <button
+        onClick={onDelete}
+        className="mb-1 w-full rounded px-3 py-1.5 text-left text-xs font-medium text-red-500 transition-colors hover:bg-red-50"
+      >
+        Delete connection
+      </button>
+      <button
+        onClick={onAddChoice}
+        className="mb-2 w-full rounded px-3 py-1.5 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+      >
+        Add choice to source
+      </button>
+      <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+        Insert node between
+      </p>
+      <div className="grid grid-cols-3 gap-1">
+        {NODE_PICKER_ITEMS.map(({ type, label, color }) => (
+          <button
+            key={type}
+            onClick={() => onInsert(type)}
+            className="flex flex-col items-center gap-1 rounded px-3 py-2 text-xs font-semibold transition-colors hover:bg-slate-50"
+            style={{ color }}
+          >
+            <span
+              className="h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: color, opacity: 0.85 }}
+            />
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Pending connection state ──────────────────────────────────────────────────
 
 interface PendingConn {
@@ -173,7 +269,7 @@ interface PendingConn {
 // ── Inner flow component (requires ReactFlowProvider context) ─────────────────
 
 interface InnerProps {
-  story: VRNStory;
+  story: NWVStory;
   panelWidth: number;
   panelExpanded: boolean;
   onToggleExpand: () => void;
@@ -181,23 +277,26 @@ interface InnerProps {
 }
 
 function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onResizeStart }: InnerProps) {
-  const {
-    selectedNodeId,
-    selectedPanel,
-    setSelectedNode,
-    deleteNode,
-    connectNodes,
-    updateNodePosition,
-    batchUpdatePositions,
-    createNode,
-  } = useStoryStore();
+  const selectedNodeId = useStoryStore((s) => s.selectedNodeId);
+  const selectedPanel = useStoryStore((s) => s.selectedPanel);
+  const setSelectedNode = useStoryStore((s) => s.setSelectedNode);
+  const deleteNode = useStoryStore((s) => s.deleteNode);
+  const connectNodes = useStoryStore((s) => s.connectNodes);
+  const batchUpdatePositions = useStoryStore((s) => s.batchUpdatePositions);
+  const createNode = useStoryStore((s) => s.createNode);
+  const deleteChoice = useStoryStore((s) => s.deleteChoice);
+  const addChoice = useStoryStore((s) => s.addChoice);
+  const insertNodeBetween = useStoryStore((s) => s.insertNodeBetween);
+  const reorderBlock = useStoryStore((s) => s.reorderBlock);
+  const moveBlockBetweenNodes = useStoryStore((s) => s.moveBlockBetweenNodes);
 
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, getNodes } = useReactFlow();
 
   const { nodes: initialNodes, edges: initialEdges } = storyToFlow(story);
   const [nodes, setNodes] = useNodesState(initialNodes);
   const [edges, setEdges] = useEdgesState(initialEdges);
   const [pendingConn, setPendingConn] = useState<PendingConn | null>(null);
+  const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
 
   // Re-sync React Flow state whenever the story changes
   useEffect(() => {
@@ -207,7 +306,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.nodes]);
 
-  // Keyboard delete
+  // Keyboard delete (locked guard is in the store's deleteNode action)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
@@ -267,6 +366,43 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
     [pendingConn, createNode, connectNodes],
   );
 
+  // Edge click → show context menu
+  const onEdgeClick = useCallback(
+    (_e: React.MouseEvent, edge: Edge) => {
+      const data = edge.data as { sourceId: string; choiceId: string } | undefined;
+      if (!data) return;
+      setPendingEdge({
+        sourceId: data.sourceId,
+        targetId: edge.target,
+        choiceId: data.choiceId,
+        screenX: _e.clientX,
+        screenY: _e.clientY,
+      });
+    },
+    [],
+  );
+
+  const handleEdgeDelete = useCallback(() => {
+    if (!pendingEdge) return;
+    deleteChoice(pendingEdge.sourceId, pendingEdge.choiceId);
+    setPendingEdge(null);
+  }, [pendingEdge, deleteChoice]);
+
+  const handleEdgeInsert = useCallback(
+    (type: NodeType) => {
+      if (!pendingEdge) return;
+      insertNodeBetween(pendingEdge.sourceId, pendingEdge.targetId, type);
+      setPendingEdge(null);
+    },
+    [pendingEdge, insertNodeBetween],
+  );
+
+  const handleEdgeAddChoice = useCallback(() => {
+    if (!pendingEdge) return;
+    addChoice(pendingEdge.sourceId);
+    setPendingEdge(null);
+  }, [pendingEdge, addChoice]);
+
   // Live collision push — Option B: nudge overlapping nodes while dragging
   const onNodeDrag: OnNodeDrag = useCallback(
     (_, draggedNode) => {
@@ -277,27 +413,24 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
 
   // Persist all positions (dragged node + any pushed siblings) on release
   const onNodeDragStop: OnNodeDrag = useCallback(
-    (_, _node) => {
-      setNodes((current) => {
-        batchUpdatePositions(
-          current.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y })),
-        );
-        return current;
-      });
+    () => {
+      const current = getNodes();
+      batchUpdatePositions(
+        current.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y })),
+      );
     },
-    [batchUpdatePositions, setNodes],
+    [batchUpdatePositions, getNodes],
   );
 
   // Auto-arrange via Dagre — called from toolbar button
   const handleAutoLayout = useCallback(() => {
-    setNodes((current) => {
-      const laid = autoLayout(current, edges);
-      batchUpdatePositions(
-        laid.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y })),
-      );
-      return laid;
-    });
-  }, [setNodes, edges, batchUpdatePositions]);
+    const current = getNodes();
+    const laid = autoLayout(current, edges);
+    setNodes(laid);
+    batchUpdatePositions(
+      laid.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y })),
+    );
+  }, [getNodes, setNodes, edges, batchUpdatePositions]);
 
 
   const onNodeClick = useCallback(
@@ -311,9 +444,94 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
     setSelectedNode(null);
   }, [setSelectedNode]);
 
+  // ── Block drag & drop ────────────────────────────────────────────────────────
+
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const [activeBlockDrag, setActiveBlockDrag] = useState<{
+    block: NWVBlock;
+    nodeId: string;
+    charName?: string;
+  } | null>(null);
+
+  const onDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const data = event.active.data.current as { nodeId: string; blockId: string } | undefined;
+      if (!data) return;
+      const node = story.nodes.find((n) => n.id === data.nodeId);
+      const block = node?.blocks?.find((b) => b.id === data.blockId);
+      if (!block) return;
+      const char = block.characterId
+        ? story.characters.find((c) => c.id === block.characterId)
+        : undefined;
+      setActiveBlockDrag({
+        block,
+        nodeId: data.nodeId,
+        charName: char?.name,
+      });
+    },
+    [story],
+  );
+
+  const onDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setActiveBlockDrag(null);
+      const { active, over } = event;
+      if (!over || !active.data.current) return;
+
+      const activeData = active.data.current as { nodeId: string; blockId: string };
+      const overData = over.data.current as { nodeId: string; blockId?: string } | undefined;
+      if (!overData) return;
+
+      const sourceNodeId = activeData.nodeId;
+      const blockId = activeData.blockId;
+      const targetNodeId = overData.nodeId;
+
+      // Strip 'canvas-' or 'panel-' prefix from IDs to get actual block IDs
+      const stripPrefix = (id: string) => id.replace(/^(canvas|panel)-/, '');
+
+      if (sourceNodeId === targetNodeId) {
+        // Reorder within same node
+        const node = story.nodes.find((n) => n.id === sourceNodeId);
+        const blocks = node?.blocks ?? [];
+        const oldIndex = blocks.findIndex((b) => b.id === blockId);
+        const overBlockId = overData.blockId ?? stripPrefix(String(over.id));
+        const newIndex = blocks.findIndex((b) => b.id === overBlockId);
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          reorderBlock(sourceNodeId, blockId, newIndex);
+        }
+      } else {
+        // Move between nodes — reject if target is locked
+        const targetNode = story.nodes.find((n) => n.id === targetNodeId);
+        if (targetNode?.locked) return;
+        const targetBlocks = targetNode?.blocks ?? [];
+        const overBlockId = overData.blockId ?? stripPrefix(String(over.id));
+        const insertIndex = targetBlocks.findIndex((b) => b.id === overBlockId);
+        moveBlockBetweenNodes(
+          sourceNodeId,
+          blockId,
+          targetNodeId,
+          insertIndex >= 0 ? insertIndex : targetBlocks.length,
+        );
+      }
+    },
+    [story, reorderBlock, moveBlockBetweenNodes],
+  );
+
+  const onDragCancel = useCallback(() => setActiveBlockDrag(null), []);
+
   return (
     <div className="flex h-full w-full flex-col">
       <CanvasToolbar onAutoLayout={handleAutoLayout} />
+      <DndContext
+        sensors={dndSensors}
+        collisionDetection={pointerWithin}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={onDragCancel}
+      >
       <div className="flex flex-1 overflow-hidden">
         <ReactFlow
           nodes={nodes}
@@ -325,6 +543,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
           onConnectEnd={onConnectEnd}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
+          onEdgeClick={onEdgeClick}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
           deleteKeyCode={null}
@@ -367,6 +586,17 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
           />
         )}
 
+        {/* Edge context menu — appears where user clicked the edge */}
+        {pendingEdge && (
+          <EdgeContextMenu
+            edge={pendingEdge}
+            onDelete={handleEdgeDelete}
+            onInsert={handleEdgeInsert}
+            onAddChoice={handleEdgeAddChoice}
+            onClose={() => setPendingEdge(null)}
+          />
+        )}
+
         {selectedNodeId && (
           <NodeEditorPanel
             panelWidth={panelWidth}
@@ -392,6 +622,12 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
           />
         )}
       </div>
+      <DragOverlay dropAnimation={null}>
+        {activeBlockDrag && (
+          <DragPreview block={activeBlockDrag.block} characterName={activeBlockDrag.charName} />
+        )}
+      </DragOverlay>
+      </DndContext>
     </div>
   );
 }

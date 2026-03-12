@@ -1,10 +1,33 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import type { VRNCharacter } from '@void-runner/engine';
+import type { NWVCharacter, GenreSlug } from '@nodeweaver/engine';
+import { GENRE_META } from '@nodeweaver/engine';
 import { useStoryStore } from '@/store/story';
 import { useSettingsStore } from '@/lib/settings';
 import { charSeed } from '@/lib/char-seed';
+
+const EMOTION_OPTIONS = [
+  'neutral', 'happy', 'sad', 'angry', 'fearful', 'surprised', 'excited',
+  'tender', 'anxious', 'melancholic', 'curious', 'determined', 'amused', 'contemptuous',
+].map(v => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }));
+
+const TONE_OPTIONS = [
+  'calm', 'whispering', 'shouting', 'urgent', 'sarcastic', 'monotone', 'cheerful',
+  'somber', 'authoritative', 'hesitant', 'pleading', 'threatening', 'gentle', 'cold',
+].map(v => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }));
+
+const VOICE_TEXTURE_OPTIONS = [
+  'breathy', 'strained', 'gravelly', 'husky', 'nasal', 'raspy',
+  'smooth', 'trembling', 'crisp', 'soft', 'throaty', 'clear',
+].map(v => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }));
+
+const FALLBACK_LINES = GENRE_META.custom.voiceTestLines;
+
+function pickTestLine(genre?: GenreSlug): string {
+  const lines = (genre && GENRE_META[genre]?.voiceTestLines) || FALLBACK_LINES;
+  return lines[Math.floor(Math.random() * lines.length)];
+}
 
 // ── Character list row ────────────────────────────────────────────────────────
 
@@ -13,7 +36,7 @@ function CharacterRow({
   isSelected,
   onSelect,
 }: {
-  character: VRNCharacter;
+  character: NWVCharacter;
   isSelected: boolean;
   onSelect: () => void;
 }) {
@@ -45,8 +68,8 @@ function CharacterRow({
 
 // ── Character editor ──────────────────────────────────────────────────────────
 
-function CharacterEditor({ character }: { character: VRNCharacter }) {
-  const { updateCharacter, deleteCharacter } = useStoryStore();
+function CharacterEditor({ character }: { character: NWVCharacter }) {
+  const { updateCharacter, deleteCharacter, activeStory } = useStoryStore();
   const { anthropicKey } = useSettingsStore();
   const [testing, setTesting] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -71,7 +94,7 @@ function CharacterEditor({ character }: { character: VRNCharacter }) {
   const isNarrator = character.id === 'narrator';
   const isLocked = !!character.voiceLocked;
 
-  const up = (patch: Partial<VRNCharacter>) => updateCharacter(character.id, patch);
+  const up = (patch: Partial<NWVCharacter>) => updateCharacter(character.id, patch);
 
   // ── AI voice description generator ─────────────────────────────────────────
 
@@ -142,7 +165,7 @@ function CharacterEditor({ character }: { character: VRNCharacter }) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          text: `This is ${character.name || 'the character'} speaking. The signal is clear.`,
+          text: pickTestLine(activeStory?.metadata?.genre),
           instruct,
           seed: charSeed(character.id),
           temperature: 0.7,
@@ -273,6 +296,51 @@ function CharacterEditor({ character }: { character: VRNCharacter }) {
             Voice locked — seed {charSeed(character.id)} · unlock to edit
           </p>
         )}
+      </div>
+
+      {/* Default TTS delivery */}
+      <div>
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Default Delivery
+        </label>
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <label className="mb-0.5 block text-[10px] text-slate-400">Emotion</label>
+            <select
+              className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 focus:border-violet-400 focus:outline-none"
+              value={character.defaultEmotion ?? ''}
+              onChange={(e) => up({ defaultEmotion: e.target.value || undefined })}
+            >
+              <option value="">None</option>
+              {EMOTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+          <div className="flex-1">
+            <label className="mb-0.5 block text-[10px] text-slate-400">Tone</label>
+            <select
+              className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 focus:border-violet-400 focus:outline-none"
+              value={character.defaultTone ?? ''}
+              onChange={(e) => up({ defaultTone: e.target.value || undefined })}
+            >
+              <option value="">None</option>
+              {TONE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+          <div className="flex-1">
+            <label className="mb-0.5 block text-[10px] text-slate-400">Voice</label>
+            <select
+              className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 focus:border-violet-400 focus:outline-none"
+              value={character.defaultVoiceTexture ?? ''}
+              onChange={(e) => up({ defaultVoiceTexture: e.target.value || undefined })}
+            >
+              <option value="">None</option>
+              {VOICE_TEXTURE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+        </div>
+        <p className="mt-1 text-[10px] text-slate-400">
+          Defaults applied when a block has no per-block override set.
+        </p>
       </div>
 
       {/* Delete */}

@@ -1,11 +1,11 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import type { VRNStory } from '@void-runner/engine';
-import { GENRE_META } from '@void-runner/engine';
+import type { NWVStory } from '@nodeweaver/engine';
+import { GENRE_META } from '@nodeweaver/engine';
 
 interface StoryCardProps {
-  story: VRNStory;
+  story: NWVStory;
   onDelete?: (id: string) => void;
 }
 

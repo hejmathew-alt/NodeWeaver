@@ -1,11 +1,11 @@
-import type { VRNStory } from '@void-runner/engine';
+import type { NWVStory } from '@nodeweaver/engine';
 import { deriveBody } from '@/lib/blocks';
 
 /**
  * Ensures node.body is synced from prose blocks (for game engine compat).
  * The game reads scene.text = node.body; blocks are the designer's source of truth.
  */
-function prepareForExport(story: VRNStory): VRNStory {
+function prepareForExport(story: NWVStory): NWVStory {
   return {
     ...story,
     nodes: story.nodes.map((n) =>
@@ -17,25 +17,25 @@ function prepareForExport(story: VRNStory): VRNStory {
 }
 
 /**
- * Exports the full story (including canvas positions) as a .vrn JSON file.
+ * Exports the full story (including canvas positions) as a .nwv JSON file.
  * Position data is preserved so re-importing into the designer restores layout.
  * The game engine ignores unknown fields, so positions are safe to include.
  */
-export function exportStoryToVRN(story: VRNStory): void {
+export function exportStoryToNWV(story: NWVStory): void {
   const json = JSON.stringify(prepareForExport(story), null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   const slug = story.metadata.title.replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'story';
   a.href = url;
-  a.download = `${slug}.vrn`;
+  a.download = `${slug}.nwv`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
 // ── File System Access API helpers ────────────────────────────────────────────
 
-async function writeToHandle(handle: FileSystemFileHandle, story: VRNStory): Promise<void> {
+async function writeToHandle(handle: FileSystemFileHandle, story: NWVStory): Promise<void> {
   const writable = await handle.createWritable();
   await writable.write(JSON.stringify(story, null, 2));
   await writable.close();
@@ -44,23 +44,23 @@ async function writeToHandle(handle: FileSystemFileHandle, story: VRNStory): Pro
 /**
  * Opens a save file picker and writes the story to the chosen file.
  * Returns the FileSystemFileHandle so the caller can persist it for future saves.
- * Falls back to exportStoryToVRN (blob download) and returns null if the
+ * Falls back to exportStoryToNWV (blob download) and returns null if the
  * File System Access API is unavailable (e.g. Firefox).
  */
-export async function saveFileAs(story: VRNStory): Promise<FileSystemFileHandle | null> {
+export async function saveFileAs(story: NWVStory): Promise<FileSystemFileHandle | null> {
   if (typeof window === 'undefined' || typeof window.showSaveFilePicker !== 'function') {
-    exportStoryToVRN(story);
+    exportStoryToNWV(story);
     return null;
   }
   const slug = story.metadata.title.replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'story';
   let handle: FileSystemFileHandle;
   try {
     handle = await window.showSaveFilePicker({
-      suggestedName: `${slug}.vrn`,
+      suggestedName: `${slug}.nwv`,
       types: [
         {
-          description: 'Void Runner Narrative',
-          accept: { 'application/json': ['.vrn'] },
+          description: 'NodeWeaver Story',
+          accept: { 'application/json': ['.nwv'] },
         },
       ],
     });
@@ -75,6 +75,6 @@ export async function saveFileAs(story: VRNStory): Promise<FileSystemFileHandle 
 /**
  * Writes the story to an already-obtained FileSystemFileHandle (no picker).
  */
-export async function saveFile(story: VRNStory, handle: FileSystemFileHandle): Promise<void> {
+export async function saveFile(story: NWVStory, handle: FileSystemFileHandle): Promise<void> {
   await writeToHandle(handle, prepareForExport(story));
 }

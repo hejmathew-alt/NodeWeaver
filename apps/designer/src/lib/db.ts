@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { VRNStory } from '@void-runner/engine';
+import type { NWVStory } from '@nodeweaver/engine';
 
 export interface FileHandleRecord {
   storyId: string;
@@ -7,7 +7,7 @@ export interface FileHandleRecord {
 }
 
 const db = new Dexie('VoidRunnerDesigner') as Dexie & {
-  stories: EntityTable<VRNStory, 'id'>;
+  stories: EntityTable<NWVStory, 'id'>;
   fileHandles: EntityTable<FileHandleRecord, 'storyId'>;
 };
 

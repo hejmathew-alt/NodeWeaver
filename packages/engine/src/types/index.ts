@@ -1,5 +1,5 @@
 // ============================================================
-// VRN — Void Runner Narrative format
+// NWV — NodeWeaver format
 // Source of truth for all schema shared between the designer
 // app and the game engine runtime.
 // ============================================================
@@ -20,7 +20,7 @@ export type GenreSlug =
 // Choices
 // ------------------------------------------------------------
 
-export interface VRNEffects {
+export interface NWVEffects {
   str?: number;
   wit?: number;
   charm?: number;
@@ -28,7 +28,7 @@ export interface VRNEffects {
   flag?: string;
 }
 
-export interface VRNRequirement {
+export interface NWVRequirement {
   str?: number;
   wit?: number;
   charm?: number;
@@ -36,25 +36,25 @@ export interface VRNRequirement {
   flag?: string;
 }
 
-export interface VRNCombat {
-  /** Key into VRNStory.enemies */
+export interface NWVCombat {
+  /** Key into NWVStory.enemies */
   enemy: string;
   phase: number;
 }
 
-export interface VRNEnding {
+export interface NWVEnding {
   title: string;
   text: string;
 }
 
 // ------------------------------------------------------------
 // Script lines (multi-character conversation) — DEPRECATED
-// Use VRNBlock[] (node.blocks) instead. Kept for migration.
+// Use NWVBlock[] (node.blocks) instead. Kept for migration.
 // ------------------------------------------------------------
 
-export interface VRNScriptLine {
+export interface NWVScriptLine {
   id: string;
-  /** ID into VRNStory.characters; '' → use node's default character */
+  /** ID into NWVStory.characters; '' → use node's default character */
   characterId: string;
   text: string;
   /** Overrides node-level mood for this line's TTS delivery only */
@@ -65,7 +65,7 @@ export interface VRNScriptLine {
 // Blocks (unified content — replaces body + lines)
 // ------------------------------------------------------------
 
-export interface VRNBlock {
+export interface NWVBlock {
   id: string;
   /**
    * 'prose' — narrative/descriptive text; read by narrator (or characterId if set).
@@ -75,40 +75,46 @@ export interface VRNBlock {
   text: string;
   /** Character that speaks this block. Prose defaults to narrator if empty. */
   characterId?: string;
-  /** Overrides node-level mood for this block's TTS delivery */
+  /** @deprecated Use emotion/tone/voiceTexture instead */
   mood?: string;
+  /** Qwen bracket tag: [Emotional: X] */
+  emotion?: string;
+  /** Qwen bracket tag: [Tone: X] */
+  tone?: string;
+  /** Qwen bracket tag: [Voice: X] — per-block texture override */
+  voiceTexture?: string;
 }
 
-export interface VRNChoice {
+export interface NWVChoice {
   id: string;
   /** Button text shown to the player */
   label: string;
   /** Brief narrative beat shown on canvas edge (designer only) */
   flavour?: string;
   type: StatType;
-  /** ID of the next VRNNode */
+  /** ID of the next NWVNode */
   next?: string;
   /** Intermediate consequence screen text */
   consequence?: string;
   positiveConsequence?: boolean;
-  effects?: VRNEffects;
-  requires?: VRNRequirement;
+  effects?: NWVEffects;
+  requires?: NWVRequirement;
   /** Triggers a combat encounter instead of a scene transition */
-  combat?: VRNCombat;
+  combat?: NWVCombat;
   /** Flags this choice as starting an AI chat session */
   echoInit?: boolean;
   /** Opening message from the AI character */
   echoOpening?: string;
   /** Inline ending — bypasses scene transition */
-  ending?: VRNEnding;
+  ending?: NWVEnding;
 }
 
 // ------------------------------------------------------------
 // Nodes
 // ------------------------------------------------------------
 
-export interface VRNNode {
-  // --- Engine fields (consumed by the VRN runtime player) ---
+export interface NWVNode {
+  // --- Engine fields (consumed by the NWV runtime player) ---
   id: string;
   type: NodeType;
   /** "Location · Sublocation" header */
@@ -120,22 +126,24 @@ export interface VRNNode {
    * Auto-derived from prose blocks (deriveBody) — kept for game engine compat.
    */
   body: string;
-  choices: VRNChoice[];
+  choices: NWVChoice[];
 
   // --- Designer + engine metadata ---
-  /** Character slug (key into VRNStory.characters) */
+  /** Character slug (key into NWVStory.characters) */
   character?: string;
   mood?: string;
   status: NodeStatus;
+  /** Prevents editing and deletion in the designer (easily toggled) */
+  locked?: boolean;
   /**
    * Unified content blocks (prose + dialogue lines interleaved).
    * Replaces the old body/useScript/lines trio.
    */
-  blocks?: VRNBlock[];
+  blocks?: NWVBlock[];
   /** @deprecated Use blocks instead */
   useScript?: boolean;
   /** @deprecated Use blocks instead */
-  lines?: VRNScriptLine[];
+  lines?: NWVScriptLine[];
   /** Rendered audio clip filenames: node_{id}_{character_slug}.mp3 */
   audio: string[];
   /**
@@ -158,7 +166,7 @@ export interface VRNNode {
 
 export type TTSProvider = 'qwen' | 'elevenlabs' | 'kokoro' | 'webspeech';
 
-export interface VRNCharacter {
+export interface NWVCharacter {
   id: string;
   name: string;
   /** e.g. "ECHO — ship AI" */
@@ -174,13 +182,19 @@ export interface VRNCharacter {
   elevenLabsVoiceId?: string;
   kokoroVoice?: string;
   kokoroSpeed?: number;
+  /** Default emotion for blocks using this character */
+  defaultEmotion?: string;
+  /** Default tone for blocks using this character */
+  defaultTone?: string;
+  /** Default voice texture for blocks using this character */
+  defaultVoiceTexture?: string;
 }
 
 // ------------------------------------------------------------
 // Swim lanes
 // ------------------------------------------------------------
 
-export interface VRNLane {
+export interface NWVLane {
   id: string;
   name: string;
   /** CSS hex colour — used for canvas tint and node border */
@@ -195,7 +209,7 @@ export interface VRNLane {
 // Enemies (combat)
 // ------------------------------------------------------------
 
-export interface VRNEnemy {
+export interface NWVEnemy {
   name: string;
   hp: number;
   /** [min, max] damage per hit */
@@ -209,7 +223,7 @@ export interface VRNEnemy {
 // Top-level story file
 // ------------------------------------------------------------
 
-export interface VRNStoryMetadata {
+export interface NWVStoryMetadata {
   title: string;
   genre: GenreSlug;
   /** Only used when genre === 'custom'; injected verbatim into AI prompts */
@@ -221,21 +235,21 @@ export interface VRNStoryMetadata {
   updatedAt: string;
 }
 
-export interface VRNStory {
+export interface NWVStory {
   version: '1.0';
   id: string;
-  metadata: VRNStoryMetadata;
-  nodes: VRNNode[];
-  characters: VRNCharacter[];
-  lanes: VRNLane[];
-  enemies: Record<string, VRNEnemy>;
+  metadata: NWVStoryMetadata;
+  nodes: NWVNode[];
+  characters: NWVCharacter[];
+  lanes: NWVLane[];
+  enemies: Record<string, NWVEnemy>;
 }
 
 // ------------------------------------------------------------
-// Runtime player state (used by the VRN engine, not the designer)
+// Runtime player state (used by the NWV engine, not the designer)
 // ------------------------------------------------------------
 
-export interface VRNPlayerState {
+export interface NWVPlayerState {
   str: number;
   wit: number;
   charm: number;

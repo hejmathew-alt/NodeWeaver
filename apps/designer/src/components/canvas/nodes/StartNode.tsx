@@ -2,14 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
-import type { VRNNode } from '@void-runner/engine';
+import type { NWVNode } from '@nodeweaver/engine';
 import { useStoryStore } from '@/store/story';
 import { useSettingsStore, CANVAS_TEXT_CLASS } from '@/lib/settings';
 import { BlocksPreview } from './BlocksPreview';
 
 export function StartNode({ id, data, selected }: NodeProps) {
-  const node = data as unknown as VRNNode;
-  const { updateNodeSize, updateNode } = useStoryStore();
+  const node = data as unknown as NWVNode;
+  const updateNodeSize = useStoryStore((s) => s.updateNodeSize);
+  const updateNode = useStoryStore((s) => s.updateNode);
   const canvasTextSize = useSettingsStore((s) => s.canvasTextSize);
 
   const [editTitle, setEditTitle] = useState(node.title ?? '');
@@ -50,7 +51,7 @@ export function StartNode({ id, data, selected }: NodeProps) {
       )}
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        <BlocksPreview blocks={node.blocks ?? []} />
+        <BlocksPreview nodeId={id} blocks={node.blocks ?? []} />
       </div>
 
       {/* No target handle — nothing connects TO start */}

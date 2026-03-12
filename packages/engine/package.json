@@ -1,8 +1,8 @@
 {
-  "name": "@void-runner/engine",
+  "name": "@nodeweaver/engine",
   "version": "0.1.0",
   "private": true,
-  "description": "VRN story engine — types, constants, and runtime player",
+  "description": "NWV story engine — types, constants, and runtime player",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {

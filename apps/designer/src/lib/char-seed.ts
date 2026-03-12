@@ -1,6 +1,6 @@
 /**
  * Deterministic per-character seed for Qwen TTS voice consistency.
- * Exact TypeScript port of _charSeed() from void-runner.html.
+ * Deterministic char-seed for consistent TTS voice reproduction.
  *
  * Same character ID → same seed → same voice across all chunks and sessions.
  */

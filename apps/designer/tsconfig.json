@@ -20,8 +20,8 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
-      "@void-runner/engine": ["../../packages/engine/src/index.ts"],
-      "@void-runner/engine/*": ["../../packages/engine/src/*"]
+      "@nodeweaver/engine": ["../../packages/engine/src/index.ts"],
+      "@nodeweaver/engine/*": ["../../packages/engine/src/*"]
     }
   },
   "include": [

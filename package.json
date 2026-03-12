@@ -1,5 +1,5 @@
 {
-  "name": "void-runner-designer",
+  "name": "nodeweaver",
   "private": true,
   "scripts": {
     "dev": "pnpm --filter designer dev",

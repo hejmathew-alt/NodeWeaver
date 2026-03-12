@@ -4,14 +4,18 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useStoryStore } from '@/store/story';
 import { StoryCanvas } from '@/components/canvas/StoryCanvas';
-import { exportStoryToVRN } from '@/lib/export';
+import { exportStoryToNWV } from '@/lib/export';
 
 export default function StoryEditorPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
 
-  const { activeStory, loadStory, updateMetadata, fileHandle, saveToLinkedFile } = useStoryStore();
+  const activeStory = useStoryStore((s) => s.activeStory);
+  const loadStory = useStoryStore((s) => s.loadStory);
+  const updateMetadata = useStoryStore((s) => s.updateMetadata);
+  const fileHandle = useStoryStore((s) => s.fileHandle);
+  const saveToLinkedFile = useStoryStore((s) => s.saveToLinkedFile);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
@@ -158,13 +162,13 @@ export default function StoryEditorPage() {
             Save As…
           </button>
 
-          {/* Export .vrn — kept for sharing / fallback */}
+          {/* Export .nwv — kept for sharing / fallback */}
           <button
             className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            onClick={() => exportStoryToVRN(activeStory)}
-            title="Download .vrn file"
+            onClick={() => exportStoryToNWV(activeStory)}
+            title="Download .nwv file"
           >
-            Export .vrn
+            Export .nwv
           </button>
         </div>
       </header>

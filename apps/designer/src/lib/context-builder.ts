@@ -1,15 +1,15 @@
-import type { VRNStory, VRNNode, VRNCharacter } from '@void-runner/engine';
-import { getGenreBrief } from '@void-runner/engine';
+import type { NWVStory, NWVNode, NWVCharacter } from '@nodeweaver/engine';
+import { getGenreBrief } from '@nodeweaver/engine';
 
 export interface AIContext {
   /** Ordered path from root to the target node */
-  ancestralPath: VRNNode[];
+  ancestralPath: NWVNode[];
   /** Direct siblings (other children of the same parent node) */
-  siblings: VRNNode[];
+  siblings: NWVNode[];
   /** Characters appearing on any node in the ancestral path */
-  charactersOnPath: VRNCharacter[];
+  charactersOnPath: NWVCharacter[];
   /** Twist nodes that are reachable descendants of the target */
-  downstreamTwists: VRNNode[];
+  downstreamTwists: NWVNode[];
   /** Genre writing brief (custom or preset) */
   genreBrief: string;
   /** Story logline */
@@ -23,7 +23,7 @@ export interface AIContext {
  * This is the heart of the AI writing assistant — everything the
  * model needs to write consistently toward downstream twists.
  */
-export function buildAIContext(story: VRNStory, nodeId: string): AIContext {
+export function buildAIContext(story: NWVStory, nodeId: string): AIContext {
   const nodeMap = new Map(story.nodes.map((n) => [n.id, n]));
 
   // Build adjacency list: parentId → childIds (via choices)
@@ -58,7 +58,7 @@ export function buildAIContext(story: VRNStory, nodeId: string): AIContext {
     }
   }
 
-  const ancestralPath: VRNNode[] = [];
+  const ancestralPath: NWVNode[] = [];
   let cursor: string | undefined = nodeId;
   while (cursor) {
     const node = nodeMap.get(cursor);
@@ -68,11 +68,11 @@ export function buildAIContext(story: VRNStory, nodeId: string): AIContext {
 
   // --- Siblings (other children of the immediate parent) ---
   const parentId = parent.get(nodeId);
-  const siblings: VRNNode[] = parentId
+  const siblings: NWVNode[] = parentId
     ? (children.get(parentId) ?? [])
         .filter((id) => id !== nodeId)
         .map((id) => nodeMap.get(id))
-        .filter((n): n is VRNNode => n !== undefined)
+        .filter((n): n is NWVNode => n !== undefined)
     : [];
 
   // --- Characters on path ---
@@ -84,7 +84,7 @@ export function buildAIContext(story: VRNStory, nodeId: string): AIContext {
   );
 
   // --- Downstream twist nodes (BFS from target) ---
-  const downstreamTwists: VRNNode[] = [];
+  const downstreamTwists: NWVNode[] = [];
   const twistQueue = [nodeId];
   const twistVisited = new Set<string>([nodeId]);
   while (twistQueue.length > 0) {
@@ -107,5 +107,57 @@ export function buildAIContext(story: VRNStory, nodeId: string): AIContext {
     genreBrief: getGenreBrief(story.metadata.genre, story.metadata.customGenreBrief),
     logline: story.metadata.logline,
     targetTone: story.metadata.targetTone,
+  };
+}
+
+/**
+ * Flattens an AIContext into the Record<string, unknown> shape
+ * consumed by the /api/ai/generate route.
+ */
+export function aiContextToFlat(
+  ctx: AIContext,
+  story: NWVStory,
+  nodeId: string,
+): Record<string, unknown> {
+  const node = story.nodes.find((n) => n.id === nodeId);
+  const nodeMap = new Map(story.nodes.map((n) => [n.id, n]));
+
+  // Last 3 ancestors (excluding the target itself) for narrative continuity
+  const ancestors = ctx.ancestralPath.slice(0, -1);
+  const prevNodes = ancestors.slice(-3).map((n) => ({
+    title: n.title || n.id,
+    body: n.body,
+  }));
+
+  // Children of the target node via its choices
+  const nextIds = (node?.choices ?? [])
+    .map((c) => c.next)
+    .filter((id): id is string => !!id);
+  const nextNodes = nextIds
+    .map((id) => nodeMap.get(id))
+    .filter((n): n is NWVNode => !!n)
+    .map((n) => ({ title: n.title || n.id, type: n.type }));
+
+  // Only downstream twists (not every twist in the story)
+  const twistNodes = ctx.downstreamTwists.map((n) => ({
+    title: n.title || n.id,
+    body: n.body?.slice(0, 100),
+  }));
+
+  return {
+    storyTitle: story.metadata?.title,
+    genre: story.metadata?.genre,
+    genreBrief: ctx.genreBrief,
+    logline: ctx.logline,
+    targetTone: ctx.targetTone,
+    nodeTitle: node?.title,
+    nodeType: node?.type,
+    nodeLocation: node?.location,
+    nodeMood: node?.mood,
+    characters: ctx.charactersOnPath.map((c) => ({ name: c.name, role: c.role })),
+    prevNodes,
+    nextNodes,
+    twistNodes,
+    siblings: ctx.siblings.map((n) => ({ title: n.title || n.id, type: n.type })),
   };
 }

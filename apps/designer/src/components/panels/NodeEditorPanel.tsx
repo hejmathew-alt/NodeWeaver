@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import type { VRNNode, VRNBlock, VRNChoice, VRNStory, StatType, NodeType, NodeStatus, VRNCharacter } from '@void-runner/engine';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import type { NWVNode, NWVBlock, NWVChoice, NWVStory, StatType, NodeType, NWVCharacter } from '@nodeweaver/engine';
+import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useStoryStore } from '@/store/story';
 import { useSettingsStore } from '@/lib/settings';
 import { charSeed } from '@/lib/char-seed';
+import { buildAIContext, aiContextToFlat } from '@/lib/context-builder';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -25,7 +28,31 @@ const STAT_LABELS: Record<StatType, string> = {
   charm: 'CHM',
 };
 
-const STATUS_OPTIONS: NodeStatus[] = ['draft', 'complete', 'needs-work'];
+const NODE_TYPE_ITEMS: { type: NodeType; label: string }[] = [
+  { type: 'story',  label: 'Story' },
+  { type: 'chat',   label: 'Chat' },
+  { type: 'combat', label: 'Interactive' },
+  { type: 'twist',  label: 'Twist' },
+  { type: 'start',  label: 'Start' },
+  { type: 'end',    label: 'End' },
+];
+
+// ── TTS dropdown options ─────────────────────────────────────────────────────
+
+const EMOTION_OPTIONS = [
+  'neutral', 'happy', 'sad', 'angry', 'fearful', 'surprised', 'excited',
+  'tender', 'anxious', 'melancholic', 'curious', 'determined', 'amused', 'contemptuous',
+].map(v => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }));
+
+const TONE_OPTIONS = [
+  'calm', 'whispering', 'shouting', 'urgent', 'sarcastic', 'monotone', 'cheerful',
+  'somber', 'authoritative', 'hesitant', 'pleading', 'threatening', 'gentle', 'cold',
+].map(v => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }));
+
+const VOICE_TEXTURE_OPTIONS = [
+  'breathy', 'strained', 'gravelly', 'husky', 'nasal', 'raspy',
+  'smooth', 'trembling', 'crisp', 'soft', 'throaty', 'clear',
+].map(v => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }));
 
 // ── Choice card ──────────────────────────────────────────────────────────────
 
@@ -34,14 +61,14 @@ function ChoiceCard({
   nodeId,
   allNodes,
 }: {
-  choice: VRNChoice;
+  choice: NWVChoice;
   nodeId: string;
-  allNodes: VRNNode[];
+  allNodes: NWVNode[];
 }) {
   const { updateChoice, deleteChoice } = useStoryStore();
   const [expanded, setExpanded] = useState(false);
 
-  const up = (patch: Partial<VRNChoice>) => updateChoice(nodeId, choice.id, patch);
+  const up = (patch: Partial<NWVChoice>) => updateChoice(nodeId, choice.id, patch);
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50">
@@ -141,6 +168,44 @@ function ChoiceCard({
   );
 }
 
+// ── Sortable block wrapper for side panel ────────────────────────────────────
+
+function SortableBlockCard({ id, nodeId, children }: { id: string; nodeId: string; children: React.ReactNode }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, data: { nodeId, blockId: id.replace(/^panel-/, '') } });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative">
+      {/* Drag handle */}
+      <button
+        {...attributes}
+        {...listeners}
+        className="absolute left-0 top-0 bottom-0 w-5 flex items-center justify-center cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 rounded-l"
+        title="Drag to reorder or move to another node"
+      >
+        <svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor">
+          <circle cx="2" cy="2" r="1.2" /><circle cx="6" cy="2" r="1.2" />
+          <circle cx="2" cy="7" r="1.2" /><circle cx="6" cy="7" r="1.2" />
+          <circle cx="2" cy="12" r="1.2" /><circle cx="6" cy="12" r="1.2" />
+        </svg>
+      </button>
+      <div className="ml-5">{children}</div>
+    </div>
+  );
+}
+
 // ── Block editor ─────────────────────────────────────────────────────────────
 
 function BlockEditor({
@@ -153,9 +218,9 @@ function BlockEditor({
   context,
   onPlayBlock,
 }: {
-  blocks: VRNBlock[];
+  blocks: NWVBlock[];
   nodeId: string;
-  characters: VRNCharacter[];
+  characters: NWVCharacter[];
   defaultCharacterId?: string;
   readingBlockId: string | null;
   anthropicKey: string;
@@ -168,7 +233,7 @@ function BlockEditor({
   const [streamingText, setStreamingText] = useState<{ blockId: string; text: string } | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  async function handleAiBlock(block: VRNBlock) {
+  async function handleAiBlock(block: NWVBlock) {
     setAiLoadingBlockId(block.id);
     setAiError(null);
     const speakingChar = characters.find(
@@ -223,12 +288,18 @@ function BlockEditor({
     }
   }
 
+  const sortableIds = useMemo(
+    () => blocks.map((b) => `panel-${b.id}`),
+    [blocks],
+  );
+
   return (
     <div className="space-y-2">
       {blocks.length === 0 && (
         <p className="text-xs italic text-slate-400">No content yet. Add a prose or dialogue block below.</p>
       )}
 
+      <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
       {blocks.map((block, idx) => {
         const isPlaying = readingBlockId === block.id;
         const isProse = block.type === 'prose';
@@ -241,8 +312,8 @@ function BlockEditor({
         const hasVoice = !!resolvedChar?.qwenInstruct?.trim();
 
         return (
+          <SortableBlockCard key={block.id} id={`panel-${block.id}`} nodeId={nodeId}>
           <div
-            key={block.id}
             className="rounded border transition-colors"
             style={
               isPlaying
@@ -341,19 +412,38 @@ function BlockEditor({
               />
             </div>
 
-            {/* Per-block mood */}
-            <div className="border-t border-slate-100 px-2 pb-1.5 pt-0.5">
-              <input
-                type="text"
-                className="w-full bg-transparent text-[10px] text-slate-400 placeholder-slate-300 focus:text-slate-700 focus:outline-none"
-                placeholder="mood… (e.g. tense, weary, urgent)"
-                value={block.mood ?? ''}
-                onChange={(e) => updateBlock(nodeId, block.id, { mood: e.target.value || undefined })}
-              />
+            {/* Per-block TTS controls */}
+            <div className="flex gap-1.5 border-t border-slate-100 px-2 pb-1.5 pt-1">
+              <select
+                className="flex-1 min-w-0 bg-transparent text-[10px] text-slate-400 focus:text-slate-700 focus:outline-none cursor-pointer"
+                value={block.emotion ?? ''}
+                onChange={(e) => updateBlock(nodeId, block.id, { emotion: e.target.value || undefined })}
+              >
+                <option value="">Emotion…</option>
+                {EMOTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <select
+                className="flex-1 min-w-0 bg-transparent text-[10px] text-slate-400 focus:text-slate-700 focus:outline-none cursor-pointer"
+                value={block.tone ?? ''}
+                onChange={(e) => updateBlock(nodeId, block.id, { tone: e.target.value || undefined })}
+              >
+                <option value="">Tone…</option>
+                {TONE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <select
+                className="flex-1 min-w-0 bg-transparent text-[10px] text-slate-400 focus:text-slate-700 focus:outline-none cursor-pointer"
+                value={block.voiceTexture ?? ''}
+                onChange={(e) => updateBlock(nodeId, block.id, { voiceTexture: e.target.value || undefined })}
+              >
+                <option value="">Voice…</option>
+                {VOICE_TEXTURE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             </div>
           </div>
+          </SortableBlockCard>
         );
       })}
+      </SortableContext>
 
       {/* Add block buttons */}
       <div className="flex gap-2">
@@ -381,37 +471,6 @@ function BlockEditor({
   );
 }
 
-// ── Story context for AI body generation ─────────────────────────────────────
-
-function buildNodeContext(story: VRNStory, nodeId: string) {
-  const node = story.nodes.find((n) => n.id === nodeId);
-  if (!node) return {};
-  const prevNodes = story.nodes
-    .filter((n) => n.id !== nodeId && n.choices.some((c) => c.next === nodeId))
-    .slice(0, 1)
-    .map((n) => ({ title: n.title || n.id, body: n.body }));
-  const nextIds = node.choices.map((c) => c.next).filter(Boolean) as string[];
-  const nextNodes = story.nodes
-    .filter((n) => nextIds.includes(n.id))
-    .map((n) => ({ title: n.title || n.id, type: n.type }));
-  const twistNodes = story.nodes
-    .filter((n) => n.type === 'twist' && n.id !== nodeId)
-    .map((n) => ({ title: n.title || n.id }));
-  return {
-    storyTitle: story.metadata?.title,
-    genre: story.metadata?.genre,
-    targetTone: story.metadata?.targetTone,
-    nodeTitle: node.title,
-    nodeType: node.type,
-    nodeLocation: node.location,
-    nodeMood: node.mood,
-    characters: story.characters.map((c) => ({ name: c.name, role: c.role })),
-    prevNodes,
-    nextNodes,
-    twistNodes,
-  };
-}
-
 // ── Main panel ───────────────────────────────────────────────────────────────
 
 interface PanelSizeProps {
@@ -431,6 +490,21 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
     addChoice,
   } = useStoryStore();
   const { anthropicKey } = useSettingsStore();
+
+  const [typePickerOpen, setTypePickerOpen] = useState(false);
+  const typePickerRef = useRef<HTMLDivElement>(null);
+
+  // Close type picker on outside click / Escape
+  useEffect(() => {
+    if (!typePickerOpen) return;
+    const onMouse = (e: MouseEvent) => {
+      if (typePickerRef.current && !typePickerRef.current.contains(e.target as globalThis.Element)) setTypePickerOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setTypePickerOpen(false); };
+    document.addEventListener('mousedown', onMouse);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onMouse); document.removeEventListener('keydown', onKey); };
+  }, [typePickerOpen]);
 
   // Voice reading state
   const [reading, setReading] = useState(false);
@@ -464,7 +538,7 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
   if (!node) return null;
 
   const colour = NODE_TYPE_COLOURS[node.type];
-  const up = (patch: Partial<VRNNode>) => updateNode(selectedNodeId, patch);
+  const up = (patch: Partial<NWVNode>) => updateNode(selectedNodeId, patch);
   const blocks = node.blocks ?? [];
 
   // ── Voice reading (Web Audio streaming — matches game's approach) ────────────
@@ -518,7 +592,11 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
     setReadingBlockId(null);
   }
 
-  async function streamQwenLine(text: string, character: VRNCharacter, mood?: string): Promise<boolean> {
+  async function streamQwenLine(
+    text: string,
+    character: NWVCharacter,
+    opts?: { emotion?: string; tone?: string; voiceTexture?: string },
+  ): Promise<boolean> {
     // Capture the abort object for THIS session at call time.
     // If handleReadBlock later replaces readAbortRef.current with a new object,
     // we still check the original one — avoiding a race where a new session's
@@ -526,8 +604,15 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
     const abort = readAbortRef.current;
     if (!text.trim() || abort.stop) return false;
 
-    const moodSuffix = mood?.trim() ? ` Deliver this with a ${mood.trim()} emotional tone.` : '';
-    const instruct = (character.qwenInstruct ?? '') + moodSuffix;
+    // Per-block values override character defaults
+    const emotion = opts?.emotion || character.defaultEmotion;
+    const tone = opts?.tone || character.defaultTone;
+    const voiceTexture = opts?.voiceTexture || character.defaultVoiceTexture;
+    let tags = '';
+    if (emotion) tags += `[Emotional: ${emotion}] `;
+    if (tone) tags += `[Tone: ${tone}] `;
+    if (voiceTexture) tags += `[Voice: ${voiceTexture}] `;
+    const instruct = (character.qwenInstruct ?? '') + (tags ? ' ' + tags.trim() : '');
 
     const ctrl = new AbortController();
     streamCtrlRef.current = ctrl;
@@ -599,14 +684,14 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
     const _ctx = getAudioCtx();
     if (_ctx.state === 'suspended') _ctx.resume().catch(() => {});
 
-    const NARRATOR: VRNCharacter = { id: 'narrator', name: 'Narrator', role: '', backstory: '', traits: '', qwenInstruct: 'A calm, measured narrator with a clear, neutral voice.' };
+    const NARRATOR: NWVCharacter = { id: 'narrator', name: 'Narrator', role: '', backstory: '', traits: '', qwenInstruct: 'A calm, measured narrator with a clear, neutral voice.' };
 
     for (const block of blocks) {
       if (abort.stop || !block.text?.trim()) continue;
       const charId = block.characterId || node.character || 'narrator';
       const character = activeStory.characters.find((c) => c.id === charId) ?? NARRATOR;
       setReadingBlockId(block.id);
-      await streamQwenLine(block.text, character, block.mood);
+      await streamQwenLine(block.text, character, { emotion: block.emotion, tone: block.tone, voiceTexture: block.voiceTexture });
       if (abort.stop) break;
     }
 
@@ -639,7 +724,7 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
     const _ctx = getAudioCtx();
     if (_ctx.state === 'suspended') _ctx.resume().catch(() => {});
 
-    await streamQwenLine(block.text, character, block.mood);
+    await streamQwenLine(block.text, character, { emotion: block.emotion, tone: block.tone, voiceTexture: block.voiceTexture });
 
     if (!readAbortRef.current.stop) {
       setReading(false);
@@ -661,19 +746,61 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
 
       {/* Panel header */}
       <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
-        <span
-          className="rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white"
-          style={{ backgroundColor: colour }}
-        >
-          {node.type === 'combat' ? 'interactive' : node.type}
-        </span>
+        {/* Clickable type badge with dropdown */}
+        <div className="relative" ref={typePickerRef}>
+          <button
+            className="flex items-center gap-1 rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white transition-opacity hover:opacity-80"
+            style={{ backgroundColor: colour }}
+            onClick={() => setTypePickerOpen((o) => !o)}
+            title="Change node type"
+          >
+            {node.type === 'combat' ? 'interactive' : node.type}
+            <span className="text-[8px] opacity-70">▾</span>
+          </button>
+          {typePickerOpen && (
+            <div className="absolute left-0 top-full z-50 mt-1 rounded-lg border border-slate-200 bg-white p-1 shadow-xl">
+              {NODE_TYPE_ITEMS.map(({ type, label }) => (
+                <button
+                  key={type}
+                  onClick={() => { up({ type }); setTypePickerOpen(false); }}
+                  className={`flex w-full items-center gap-2 rounded px-3 py-1.5 text-xs font-medium transition-colors hover:bg-slate-50 ${
+                    type === node.type ? 'bg-slate-100' : ''
+                  }`}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: NODE_TYPE_COLOURS[type] }}
+                  />
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <span className="flex-1 truncate font-mono text-xs text-slate-500">{node.id.slice(0, 8)}…</span>
+
+        {/* Lock toggle */}
         <button
-          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
-          onClick={() => deleteNode(selectedNodeId)}
+          className={`rounded px-2 py-1 text-xs transition-colors ${
+            node.locked
+              ? 'bg-amber-50 text-amber-600 hover:bg-amber-100'
+              : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'
+          }`}
+          onClick={() => up({ locked: !node.locked })}
+          title={node.locked ? 'Unlock node (allow editing)' : 'Lock node (prevent edits & deletion)'}
         >
-          Delete
+          {node.locked ? 'Locked' : 'Lock'}
         </button>
+
+        {/* Delete — hidden when locked */}
+        {!node.locked && (
+          <button
+            className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
+            onClick={() => deleteNode(selectedNodeId)}
+          >
+            Delete
+          </button>
+        )}
         <button
           onClick={onToggleExpand}
           className="ml-1 text-slate-400 hover:text-slate-900"
@@ -691,8 +818,8 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
         </button>
       </div>
 
-      {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-white">
+      {/* Scrollable body — pointer-events disabled when locked */}
+      <div className={`flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-white ${node.locked ? 'pointer-events-none opacity-60' : ''}`}>
 
         {/* Title */}
         <div>
@@ -743,25 +870,11 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
             defaultCharacterId={node.character}
             readingBlockId={readingBlockId}
             anthropicKey={anthropicKey}
-            context={buildNodeContext(activeStory, selectedNodeId)}
+            context={aiContextToFlat(buildAIContext(activeStory, selectedNodeId), activeStory, selectedNodeId)}
             onPlayBlock={handleReadBlock}
           />
 
           {readError && <p className="mt-1.5 text-xs text-red-500">{readError}</p>}
-        </div>
-
-        {/* Status */}
-        <div>
-          <label className="mb-1 block text-xs text-slate-400">Status</label>
-          <select
-            className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:outline-none"
-            value={node.status}
-            onChange={(e) => up({ status: e.target.value as NodeStatus })}
-          >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
         </div>
 
         {/* Choices — hidden for terminal end nodes */}

@@ -15,7 +15,7 @@ Rules:
 - End with "Studio-quality recording."
 - Return only the instruct prompt, no preamble or explanation`;
 
-const BODY_SYSTEM_BASE = `You are a narrative writer for Void Runner, a sci-fi text RPG set in a grim, atmospheric future.
+const BODY_SYSTEM_BASE = `You are a narrative writer for an interactive fiction story.
 
 Write or rewrite scene body text for story nodes in this style:
 - Second-person present tense ("You step into…", "The door slides open…")
@@ -25,7 +25,7 @@ Write or rewrite scene body text for story nodes in this style:
 - Do NOT include player choices, dialogue options, or meta-commentary
 - Return only the scene text`;
 
-const LINE_SYSTEM_BASE = `You are a dialogue writer for Void Runner, a sci-fi text RPG set in a grim, atmospheric future.
+const LINE_SYSTEM_BASE = `You are a dialogue writer for an interactive fiction story.
 
 Write a single line of character dialogue:
 - Write only the spoken words — no speech tags, no quotation marks, no action descriptions
@@ -141,13 +141,56 @@ export async function POST(req: NextRequest) {
   });
 }
 
+// ── Dynamic base builders (genre-aware) ──────────────────────────────────────
+
+function dynamicBodyBase(ctx: Record<string, unknown>): string {
+  const genre = ctx.genre as string | undefined;
+  const title = ctx.storyTitle as string | undefined;
+  const brief = ctx.genreBrief as string | undefined;
+  const gameDesc = title ? `${title}, a ${genre ?? 'text'} RPG` : `a ${genre ?? 'text'} RPG`;
+
+  let base = `You are a narrative writer for ${gameDesc}.
+
+Write or rewrite scene body text for story nodes in this style:
+- Second-person present tense ("You step into…", "The door slides open…")
+- Terse, evocative prose — vivid but not overwrought
+- Grounded sensory details (light, sound, smell, texture)
+- Match the tension and mood of surrounding scenes
+- Do NOT include player choices, dialogue options, or meta-commentary
+- Return only the scene text`;
+
+  if (brief) base += `\n\nGENRE VOICE: ${brief}`;
+  return base;
+}
+
+function dynamicLineBase(ctx: Record<string, unknown>): string {
+  const genre = ctx.genre as string | undefined;
+  const title = ctx.storyTitle as string | undefined;
+  const brief = ctx.genreBrief as string | undefined;
+  const gameDesc = title ? `${title}, a ${genre ?? 'text'} RPG` : `a ${genre ?? 'text'} RPG`;
+
+  let base = `You are a dialogue writer for ${gameDesc}.
+
+Write a single line of character dialogue:
+- Write only the spoken words — no speech tags, no quotation marks, no action descriptions
+- Match the character's role, personality, and speech patterns
+- Keep it concise — 1–3 sentences maximum
+- Match the tension and mood of the surrounding scene
+- Use natural speech appropriate to the character's background
+- Do NOT include stage directions, action beats, or meta-commentary
+- Return only the dialogue text`;
+
+  if (brief) base += `\n\nGENRE VOICE: ${brief}`;
+  return base;
+}
+
 // ── Story context builders ────────────────────────────────────────────────────
 
 function buildLineSystem(ctx?: Record<string, unknown>): string {
   if (!ctx) return LINE_SYSTEM_BASE;
+  const base = dynamicLineBase(ctx);
   const parts: string[] = [];
-  if (ctx.storyTitle) parts.push(`Story: "${ctx.storyTitle}"`);
-  if (ctx.genre) parts.push(`Genre: ${ctx.genre}`);
+  if (ctx.logline) parts.push(`Logline: ${ctx.logline}`);
   if (ctx.nodeTitle)
     parts.push(`Scene: "${ctx.nodeTitle}" [${ctx.nodeType ?? 'story'}${ctx.nodeLocation ? ` · ${ctx.nodeLocation}` : ''}]`);
   if (ctx.nodeMood) parts.push(`Scene mood: ${ctx.nodeMood}`);
@@ -155,36 +198,43 @@ function buildLineSystem(ctx?: Record<string, unknown>): string {
     parts.push(`Speaking character: "${ctx.speakingCharacterName}"${ctx.speakingCharacterRole ? ` — ${ctx.speakingCharacterRole}` : ''}`);
   if (Array.isArray(ctx.prevNodes) && ctx.prevNodes.length) {
     const prev = ctx.prevNodes as { title: string; body: string }[];
-    parts.push(`Previous scene — "${prev[0].title}":\n${prev[0].body.slice(0, 150)}`);
+    const summary = prev.map((p) => `"${p.title}": ${(p.body ?? '').slice(0, 150)}`).join('\n  ');
+    parts.push(`Recent scenes leading here:\n  ${summary}`);
   }
-  return parts.length ? `${LINE_SYSTEM_BASE}\n\nCONTEXT:\n${parts.join('\n')}` : LINE_SYSTEM_BASE;
+  return parts.length ? `${base}\n\nCONTEXT:\n${parts.join('\n')}` : base;
 }
 
 function buildBodySystem(ctx?: Record<string, unknown>): string {
   if (!ctx) return BODY_SYSTEM_BASE;
+  const base = dynamicBodyBase(ctx);
   const parts: string[] = [];
-  if (ctx.storyTitle) parts.push(`Story: "${ctx.storyTitle}"`);
-  if (ctx.genre) parts.push(`Genre: ${ctx.genre}`);
+  if (ctx.logline) parts.push(`Logline: ${ctx.logline}`);
   if (ctx.targetTone) parts.push(`Tone: ${ctx.targetTone}`);
   if (ctx.nodeTitle)
     parts.push(
       `Current scene: "${ctx.nodeTitle}" [${ctx.nodeType ?? 'story'}${ctx.nodeLocation ? ` · ${ctx.nodeLocation}` : ''}]`,
     );
+  if (ctx.nodeMood) parts.push(`Scene mood: ${ctx.nodeMood}`);
   if (Array.isArray(ctx.characters) && ctx.characters.length) {
     const chars = ctx.characters as { name: string; role: string }[];
-    parts.push(`Characters: ${chars.map((c) => `${c.name} (${c.role})`).join(', ')}`);
+    parts.push(`Characters on this path: ${chars.map((c) => `${c.name} (${c.role})`).join(', ')}`);
   }
   if (Array.isArray(ctx.prevNodes) && ctx.prevNodes.length) {
     const prev = ctx.prevNodes as { title: string; body: string }[];
-    parts.push(`Previous scene — "${prev[0].title}":\n${prev[0].body.slice(0, 200)}`);
+    const summary = prev.map((p) => `"${p.title}": ${(p.body ?? '').slice(0, 150)}`).join('\n  ');
+    parts.push(`Ancestral path (recent scenes leading here):\n  ${summary}`);
+  }
+  if (Array.isArray(ctx.siblings) && ctx.siblings.length) {
+    const sibs = ctx.siblings as { title: string; type: string }[];
+    parts.push(`Sibling branches: ${sibs.map((s) => `"${s.title}" [${s.type}]`).join(', ')}`);
   }
   if (Array.isArray(ctx.nextNodes) && ctx.nextNodes.length) {
     const next = ctx.nextNodes as { title: string; type: string }[];
     parts.push(`Leads to: ${next.map((n) => `"${n.title}" [${n.type}]`).join(', ')}`);
   }
   if (Array.isArray(ctx.twistNodes) && ctx.twistNodes.length) {
-    const twists = ctx.twistNodes as { title: string }[];
-    parts.push(`Upcoming twist anchors: ${twists.map((t) => `"${t.title}"`).join(', ')}`);
+    const twists = ctx.twistNodes as { title: string; body?: string }[];
+    parts.push(`Downstream twist anchors (write TOWARD these):\n  ${twists.map((t) => `"${t.title}"${t.body ? `: ${t.body}` : ''}`).join('\n  ')}`);
   }
-  return parts.length ? `${BODY_SYSTEM_BASE}\n\nSTORY CONTEXT:\n${parts.join('\n')}` : BODY_SYSTEM_BASE;
+  return parts.length ? `${base}\n\nSTORY CONTEXT:\n${parts.join('\n')}` : base;
 }

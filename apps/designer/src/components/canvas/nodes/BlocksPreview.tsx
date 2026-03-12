@@ -1,39 +1,53 @@
 'use client';
 
-import type { VRNBlock } from '@void-runner/engine';
+import { useMemo } from 'react';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { useDroppable } from '@dnd-kit/core';
+import type { NWVBlock } from '@nodeweaver/engine';
 import { useStoryStore } from '@/store/story';
+import { CanvasBlock } from './CanvasBlock';
 
-export function BlocksPreview({ blocks }: { blocks: VRNBlock[] }) {
+export function BlocksPreview({ nodeId, blocks }: { nodeId: string; blocks: NWVBlock[] }) {
   const characters = useStoryStore((s) => s.activeStory?.characters ?? []);
 
+  // Stable sortable IDs — prefixed to avoid collision with side panel
+  const sortableIds = useMemo(
+    () => blocks.map((b) => `canvas-${b.id}`),
+    [blocks],
+  );
+
+  const { setNodeRef: setDropRef } = useDroppable({
+    id: `droppable-${nodeId}`,
+    data: { nodeId },
+  });
+
   if (!blocks.length) {
-    return <em className="text-slate-400">No content yet</em>;
+    return (
+      <div ref={setDropRef} className="flex h-full items-center justify-center">
+        <em className="text-slate-400">No content yet</em>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-0.5 overflow-hidden">
-      {blocks.map((block) => {
-        if (block.type === 'prose') {
+    <div ref={setDropRef} className="space-y-0 overflow-hidden">
+      <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+        {blocks.map((block) => {
+          const char = block.characterId
+            ? characters.find((c) => c.id === block.characterId)
+            : undefined;
+          const charName = char?.name ?? (block.characterId ? block.characterId.slice(0, 8) : undefined);
           return (
-            <p key={block.id} className="leading-snug text-slate-600">
-              {block.text || <em className="text-slate-400">…</em>}
-            </p>
+            <CanvasBlock
+              key={block.id}
+              id={`canvas-${block.id}`}
+              block={block}
+              characterName={charName}
+              nodeId={nodeId}
+            />
           );
-        }
-        // line block
-        const char = characters.find((c) => c.id === block.characterId);
-        const name = char?.name ?? (block.characterId ? block.characterId.slice(0, 8) : 'Char');
-        return (
-          <div key={block.id} className="flex items-baseline gap-1">
-            <span className="max-w-[52px] shrink-0 truncate font-semibold text-violet-600">
-              {name}
-            </span>
-            <span className="italic text-slate-600">
-              {block.text || '…'}
-            </span>
-          </div>
-        );
-      })}
+        })}
+      </SortableContext>
     </div>
   );
 }

@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { TTSProvider } from '@void-runner/engine';
+import type { TTSProvider } from '@nodeweaver/engine';
 
 export type CanvasTextSize = 'xs' | 'sm' | 'base';
 

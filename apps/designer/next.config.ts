@@ -1,9 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Transpile the local @void-runner/engine workspace package
+  // Transpile the local @nodeweaver/engine workspace package
   // (symlinked via pnpm workspaces — Turbopack handles the TypeScript source)
-  transpilePackages: ["@void-runner/engine"],
+  transpilePackages: ["@nodeweaver/engine"],
 };
 
 export default nextConfig;

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Void Runner — Narrative Designer",
+  title: "NodeWeaver",
   description: "Visual story tree editor with AI co-author",
 };
 

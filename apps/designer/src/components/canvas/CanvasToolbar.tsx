@@ -1,6 +1,6 @@
 'use client';
 
-import type { NodeType } from '@void-runner/engine';
+import type { NodeType } from '@nodeweaver/engine';
 import { useStoryStore } from '@/store/story';
 
 const NODE_BUTTONS: {
