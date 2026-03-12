@@ -7,7 +7,7 @@ import { useStoryStore } from '@/store/story';
 import { useSettingsStore, CANVAS_TEXT_CLASS } from '@/lib/settings';
 import { BlocksPreview } from './BlocksPreview';
 
-export function TwistNode({ id, data, selected }: NodeProps) {
+export function StartNode({ id, data, selected }: NodeProps) {
   const node = data as unknown as VRNNode;
   const { updateNodeSize, updateNode } = useStoryStore();
   const canvasTextSize = useSettingsStore((s) => s.canvasTextSize);
@@ -19,31 +19,28 @@ export function TwistNode({ id, data, selected }: NodeProps) {
   return (
     <div
       className={`flex w-full h-full flex-col rounded-lg bg-white p-2 ${CANVAS_TEXT_CLASS[canvasTextSize]} shadow-md overflow-hidden transition-shadow ${
-        selected ? 'ring-2 ring-purple-400' : ''
+        selected ? 'ring-2 ring-teal-400' : ''
       }`}
-      style={{ border: '1px dashed #a855f7' }}
+      style={{ border: '1px solid #14b8a6' }}
     >
       <NodeResizer
-        color="#a855f7"
+        color="#14b8a6"
         isVisible={selected}
         minWidth={160}
         minHeight={80}
         onResizeEnd={(_, { width, height }) => updateNodeSize(id, width, height)}
       />
 
-      <Handle type="target" position={Position.Top} className="!bg-purple-400" />
-
       <div className="mb-1 flex shrink-0 items-center gap-2">
-        <span className="rounded bg-purple-800 px-1.5 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
-          Twist
+        <span className="rounded bg-teal-600 px-1.5 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
+          Start
         </span>
-        {node.status && <span className="text-xs text-slate-500">{node.status}</span>}
       </div>
 
       {selected ? (
         <input
           className="mb-1 w-full shrink-0 bg-transparent font-semibold text-slate-900 placeholder-slate-400 focus:outline-none"
-          placeholder="Twist title…"
+          placeholder="Scene title…"
           value={editTitle}
           onChange={(e) => setEditTitle(e.target.value)}
           onBlur={() => { if (editTitle !== (node.title ?? '')) updateNode(id, { title: editTitle }); }}
@@ -56,7 +53,8 @@ export function TwistNode({ id, data, selected }: NodeProps) {
         <BlocksPreview blocks={node.blocks ?? []} />
       </div>
 
-      <Handle type="source" position={Position.Bottom} className="!bg-purple-400" />
+      {/* No target handle — nothing connects TO start */}
+      <Handle type="source" position={Position.Bottom} className="!bg-teal-400" />
     </div>
   );
 }

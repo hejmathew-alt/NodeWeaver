@@ -1,29 +1,64 @@
 import { create } from 'zustand';
+import { nanoid } from 'nanoid';
 import type {
   VRNStory,
   VRNNode,
+  VRNBlock,
   VRNChoice,
+  VRNCharacter,
+  VRNScriptLine,
   VRNStoryMetadata,
   NodeType,
 } from '@void-runner/engine';
 import { db } from '@/lib/db';
+import { saveFileAs, saveFile } from '@/lib/export';
+import { deriveBody, migrateNodeToBlocks } from '@/lib/blocks';
+
+// ── Narrator default ─────────────────────────────────────────────────────────
+
+export const NARRATOR_DEFAULT: VRNCharacter = {
+  id: 'narrator',
+  name: 'Narrator',
+  role: 'Omniscient story narrator',
+  backstory: '',
+  traits: '',
+  ttsProvider: 'qwen',
+  qwenInstruct:
+    'Male, late 40s to 50s, no strong regional accent — placeless, timeless. Deep, gravelly timbre with natural vocal weight and slow, deliberate pacing. Resonant chest voice with a slight roughness, like stone worn smooth by time. Calm and unhurried — each word chosen carefully, as if language itself is a rare resource. Poetic and measured delivery, with long, intentional pauses that feel vast rather than empty. Emotionally detached but not cold — ancient, observational, quietly inevitable. Like the universe narrating itself. Studio-quality recording.',
+  voiceLocked: false,
+};
+
+function ensureNarrator(characters: VRNCharacter[]): VRNCharacter[] {
+  if (characters.some((c) => c.id === 'narrator')) return characters;
+  return [NARRATOR_DEFAULT, ...characters];
+}
+
+// ── Store interface ──────────────────────────────────────────────────────────
 
 interface StoryStore {
   activeStory: VRNStory | null;
   selectedNodeId: string | null;
+  selectedPanel: 'character' | 'settings' | null;
+  selectedCharacterId: string | null;
+  fileHandle: FileSystemFileHandle | null;
 
   // Load / persist
   loadStory: (id: string) => Promise<void>;
   saveStory: () => Promise<void>;
+  setFileHandle: (handle: FileSystemFileHandle | null) => void;
+  saveToLinkedFile: () => Promise<'saved' | 'saved-as' | 'cancelled' | 'fallback'>;
 
   // Selection
   setSelectedNode: (id: string | null) => void;
+  setSelectedPanel: (panel: 'character' | 'settings' | null) => void;
+  setSelectedCharacter: (id: string | null) => void;
 
   // Node CRUD
   updateNode: (nodeId: string, patch: Partial<VRNNode>) => Promise<void>;
   createNode: (type: NodeType, position?: { x: number; y: number }) => string;
   deleteNode: (nodeId: string) => void;
   updateNodePosition: (nodeId: string, x: number, y: number) => void;
+  batchUpdatePositions: (positions: { id: string; x: number; y: number }[]) => void;
 
   // Choice CRUD
   addChoice: (nodeId: string) => string;
@@ -33,9 +68,31 @@ interface StoryStore {
   // Connect two nodes (creates a choice on source pointing to target)
   connectNodes: (sourceNodeId: string, targetNodeId: string) => void;
 
+  // Node sizing
+  updateNodeSize: (nodeId: string, width: number, height: number) => void;
+
+  // Script line CRUD (deprecated — use block actions; kept for legacy)
+  addLine: (nodeId: string, characterId?: string) => void;
+  updateLine: (nodeId: string, lineId: string, patch: Partial<Omit<VRNScriptLine, 'id'>>) => void;
+  deleteLine: (nodeId: string, lineId: string) => void;
+  moveLine: (nodeId: string, lineId: string, dir: 'up' | 'down') => void;
+
+  // Block CRUD
+  addBlock: (nodeId: string, type: 'prose' | 'line', defaultCharId?: string) => void;
+  updateBlock: (nodeId: string, blockId: string, patch: Partial<Omit<VRNBlock, 'id' | 'type'>>) => void;
+  deleteBlock: (nodeId: string, blockId: string) => void;
+  moveBlock: (nodeId: string, blockId: string, dir: 'up' | 'down') => void;
+
+  // Character CRUD
+  addCharacter: () => void;
+  updateCharacter: (id: string, patch: Partial<VRNCharacter>) => void;
+  deleteCharacter: (id: string) => void;
+
   // Metadata
   updateMetadata: (patch: Partial<VRNStoryMetadata>) => void;
 }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function stamp(story: VRNStory): VRNStory {
   return {
@@ -48,15 +105,35 @@ async function persist(story: VRNStory) {
   await db.stories.put(story);
 }
 
+// ── Store ────────────────────────────────────────────────────────────────────
+
 export const useStoryStore = create<StoryStore>((set, get) => ({
   activeStory: null,
   selectedNodeId: null,
+  selectedPanel: null,
+  selectedCharacterId: null,
+  fileHandle: null,
 
   // ── Load / persist ──────────────────────────────────────────────────────────
 
   loadStory: async (id) => {
     const story = await db.stories.get(id);
-    if (story) set({ activeStory: story });
+    if (!story) return;
+    // Ensure Narrator always exists
+    // Migrate any nodes that don't yet have blocks[]
+    const patched: VRNStory = {
+      ...story,
+      characters: ensureNarrator(story.characters),
+      nodes: story.nodes.map(migrateNodeToBlocks),
+    };
+    // Restore file handle from previous session (no permission prompt yet — lazy on first save)
+    const record = await db.fileHandles.get(id);
+    set({ activeStory: patched, selectedCharacterId: null, fileHandle: record?.handle ?? null });
+    // Persist if anything was patched (narrator injected or nodes migrated)
+    const needsPersist =
+      patched.characters.length !== story.characters.length ||
+      patched.nodes.some((n, i) => n.blocks !== story.nodes[i]?.blocks);
+    if (needsPersist) await persist(patched);
   },
 
   saveStory: async () => {
@@ -67,9 +144,48 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     await persist(updated);
   },
 
+  setFileHandle: (handle) => set({ fileHandle: handle }),
+
+  saveToLinkedFile: async () => {
+    const { activeStory, fileHandle, setFileHandle } = get();
+    if (!activeStory) return 'cancelled';
+    const fsapiAvailable = typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
+
+    if (!fileHandle) {
+      const newHandle = await saveFileAs(activeStory);
+      if (!newHandle) return fsapiAvailable ? 'cancelled' : 'fallback';
+      setFileHandle(newHandle);
+      await db.fileHandles.put({ storyId: activeStory.id, handle: newHandle });
+      return 'saved-as';
+    }
+
+    // Lazy permission check — must be inside a user gesture (button click or Cmd+S)
+    if ('queryPermission' in fileHandle) {
+      let perm = await fileHandle.queryPermission({ mode: 'readwrite' });
+      if (perm === 'denied') {
+        setFileHandle(null);
+        await db.fileHandles.delete(activeStory.id);
+        return 'cancelled';
+      }
+      if (perm === 'prompt') {
+        perm = await fileHandle.requestPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') return 'cancelled';
+      }
+    }
+
+    await saveFile(activeStory, fileHandle);
+    return 'saved';
+  },
+
   // ── Selection ───────────────────────────────────────────────────────────────
 
-  setSelectedNode: (id) => set({ selectedNodeId: id }),
+  setSelectedNode: (id) =>
+    set({ selectedNodeId: id, selectedPanel: id ? null : get().selectedPanel }),
+
+  setSelectedPanel: (panel) =>
+    set({ selectedPanel: panel, selectedNodeId: panel ? null : get().selectedNodeId }),
+
+  setSelectedCharacter: (id) => set({ selectedCharacterId: id }),
 
   // ── Node CRUD ───────────────────────────────────────────────────────────────
 
@@ -100,6 +216,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
       title: '',
       location: '',
       body: '',
+      blocks: [],
       choices: [],
       status: 'draft',
       audio: [],
@@ -110,7 +227,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
       ...activeStory,
       nodes: [...activeStory.nodes, node],
     });
-    set({ activeStory: updated, selectedNodeId: id });
+    set({ activeStory: updated, selectedNodeId: id, selectedPanel: null });
     persist(updated);
     return id;
   },
@@ -120,10 +237,8 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     if (!activeStory) return;
     const updated = stamp({
       ...activeStory,
-      // Remove node
       nodes: activeStory.nodes
         .filter((n) => n.id !== nodeId)
-        // Scrub dangling choice wires pointing to deleted node
         .map((n) => ({
           ...n,
           choices: n.choices.map((c) =>
@@ -146,6 +261,21 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
       nodes: activeStory.nodes.map((n) =>
         n.id === nodeId ? { ...n, position: { x, y } } : n
       ),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  batchUpdatePositions: (positions) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const posMap = new Map(positions.map((p) => [p.id, p]));
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        const p = posMap.get(n.id);
+        return p ? { ...n, position: { x: p.x, y: p.y } } : n;
+      }),
     });
     set({ activeStory: updated });
     persist(updated);
@@ -215,10 +345,222 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     if (!activeStory || sourceNodeId === targetNodeId) return;
     const source = activeStory.nodes.find((n) => n.id === sourceNodeId);
     if (!source) return;
-    // Don't duplicate an existing wire to the same target
     if (source.choices.some((c) => c.next === targetNodeId)) return;
     const choiceId = addChoice(sourceNodeId);
     updateChoice(sourceNodeId, choiceId, { next: targetNodeId });
+  },
+
+  // ── Node sizing ─────────────────────────────────────────────────────────────
+
+  updateNodeSize: (nodeId, width, height) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId ? { ...n, width, height } : n
+      ),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  // ── Script line CRUD ────────────────────────────────────────────────────────
+
+  addLine: (nodeId, characterId) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const lineId = crypto.randomUUID();
+    const blank: VRNScriptLine = { id: lineId, characterId: characterId ?? '', text: '' };
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId ? { ...n, lines: [...(n.lines ?? []), blank] } : n
+      ),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  updateLine: (nodeId, lineId, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId
+          ? { ...n, lines: (n.lines ?? []).map((l) => (l.id === lineId ? { ...l, ...patch } : l)) }
+          : n
+      ),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  deleteLine: (nodeId, lineId) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId ? { ...n, lines: (n.lines ?? []).filter((l) => l.id !== lineId) } : n
+      ),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  moveLine: (nodeId, lineId, dir) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId || !n.lines) return n;
+        const lines = [...n.lines];
+        const idx = lines.findIndex((l) => l.id === lineId);
+        if (idx === -1) return n;
+        const swap = dir === 'up' ? idx - 1 : idx + 1;
+        if (swap < 0 || swap >= lines.length) return n;
+        [lines[idx], lines[swap]] = [lines[swap], lines[idx]];
+        return { ...n, lines };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  // ── Block CRUD ──────────────────────────────────────────────────────────────
+
+  addBlock: (nodeId, type, defaultCharId) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const blocks = n.blocks ?? [];
+        // For line blocks, default to the last line block's speaker
+        let charId = defaultCharId;
+        if (type === 'line' && !charId) {
+          const lastLine = [...blocks].reverse().find((b) => b.type === 'line');
+          charId = lastLine?.characterId ?? '';
+        }
+        const blank: VRNBlock = {
+          id: nanoid(),
+          type,
+          text: '',
+          ...(type === 'line' ? { characterId: charId ?? '' } : {}),
+        };
+        const newBlocks = [...blocks, blank];
+        return { ...n, blocks: newBlocks, body: deriveBody(newBlocks) };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  updateBlock: (nodeId, blockId, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const newBlocks = (n.blocks ?? []).map((b) =>
+          b.id === blockId ? { ...b, ...patch } : b
+        );
+        return { ...n, blocks: newBlocks, body: deriveBody(newBlocks) };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  deleteBlock: (nodeId, blockId) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const newBlocks = (n.blocks ?? []).filter((b) => b.id !== blockId);
+        return { ...n, blocks: newBlocks, body: deriveBody(newBlocks) };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  moveBlock: (nodeId, blockId, dir) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const blocks = [...(n.blocks ?? [])];
+        const idx = blocks.findIndex((b) => b.id === blockId);
+        if (idx === -1) return n;
+        const swap = dir === 'up' ? idx - 1 : idx + 1;
+        if (swap < 0 || swap >= blocks.length) return n;
+        [blocks[idx], blocks[swap]] = [blocks[swap], blocks[idx]];
+        return { ...n, blocks, body: deriveBody(blocks) };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  // ── Character CRUD ──────────────────────────────────────────────────────────
+
+  addCharacter: () => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const id = `char_${crypto.randomUUID().slice(0, 8)}`;
+    const newChar: VRNCharacter = {
+      id,
+      name: 'New Character',
+      role: '',
+      backstory: '',
+      traits: '',
+      ttsProvider: 'qwen',
+      qwenInstruct: '',
+      voiceLocked: false,
+    };
+    const updated = stamp({
+      ...activeStory,
+      characters: [...activeStory.characters, newChar],
+    });
+    set({ activeStory: updated, selectedCharacterId: id });
+    persist(updated);
+  },
+
+  updateCharacter: (id, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      characters: activeStory.characters.map((c) =>
+        c.id === id ? { ...c, ...patch } : c
+      ),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  deleteCharacter: (id) => {
+    const { activeStory, selectedCharacterId } = get();
+    if (!activeStory || id === 'narrator') return;
+    const updated = stamp({
+      ...activeStory,
+      characters: activeStory.characters.filter((c) => c.id !== id),
+    });
+    set({
+      activeStory: updated,
+      selectedCharacterId: selectedCharacterId === id ? null : selectedCharacterId,
+    });
+    persist(updated);
   },
 
   // ── Metadata ────────────────────────────────────────────────────────────────

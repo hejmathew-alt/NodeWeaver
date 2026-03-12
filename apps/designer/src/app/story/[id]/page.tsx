@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useStoryStore } from '@/store/story';
 import { StoryCanvas } from '@/components/canvas/StoryCanvas';
@@ -11,13 +11,53 @@ export default function StoryEditorPage() {
   const router = useRouter();
   const id = params.id as string;
 
-  const { activeStory, loadStory, updateMetadata } = useStoryStore();
+  const { activeStory, loadStory, updateMetadata, fileHandle, saveToLinkedFile } = useStoryStore();
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
+  const [saveStatus, setSaveStatus] = useState('');
 
   useEffect(() => {
     loadStory(id);
   }, [id, loadStory]);
+
+  // ── Flash helper ──────────────────────────────────────────────────────────
+
+  const flash = useCallback((msg: string) => {
+    setSaveStatus(msg);
+    setTimeout(() => setSaveStatus(''), 2000);
+  }, []);
+
+  // ── Save handlers ─────────────────────────────────────────────────────────
+
+  const handleSave = useCallback(async () => {
+    const result = await saveToLinkedFile();
+    if (result === 'saved' || result === 'saved-as') flash('Saved');
+    else if (result === 'fallback') flash('Downloaded');
+  }, [saveToLinkedFile, flash]);
+
+  const handleSaveAs = useCallback(async () => {
+    const result = await saveToLinkedFile();
+    if (result === 'saved-as') flash('Saved');
+    else if (result === 'fallback') flash('Downloaded');
+  }, [saveToLinkedFile, flash]);
+
+  // ── Cmd+S / Ctrl+S ────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        saveToLinkedFile().then((r) => {
+          if (r === 'saved' || r === 'saved-as') flash('Saved');
+          else if (r === 'fallback') flash('Downloaded');
+        });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [saveToLinkedFile, flash]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   if (!activeStory) {
     return (
@@ -82,13 +122,47 @@ export default function StoryEditorPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <span className="text-xs text-slate-400">
             {activeStory.nodes.length} nodes · {activeStory.metadata.genre}
           </span>
+
+          {/* Linked filename */}
+          {fileHandle && (
+            <span className="font-mono text-xs text-slate-400" title="Linked file">
+              {fileHandle.name}
+            </span>
+          )}
+
+          {/* Save status flash */}
+          {saveStatus && (
+            <span className="text-xs font-medium text-emerald-500">{saveStatus}</span>
+          )}
+
+          {/* Save — disabled until a file is linked */}
+          <button
+            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={handleSave}
+            disabled={!fileHandle}
+            title={fileHandle ? `Save to ${fileHandle.name} (⌘S)` : 'No linked file — use Save As first'}
+          >
+            Save
+          </button>
+
+          {/* Save As — always available */}
+          <button
+            className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            onClick={handleSaveAs}
+            title="Save to a new file location"
+          >
+            Save As…
+          </button>
+
+          {/* Export .vrn — kept for sharing / fallback */}
           <button
             className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900"
             onClick={() => exportStoryToVRN(activeStory)}
+            title="Download .vrn file"
           >
             Export .vrn
           </button>

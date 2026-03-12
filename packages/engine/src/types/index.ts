@@ -4,7 +4,7 @@
 // app and the game engine runtime.
 // ============================================================
 
-export type NodeType = 'story' | 'combat' | 'chat' | 'twist';
+export type NodeType = 'story' | 'combat' | 'chat' | 'twist' | 'start' | 'end';
 export type NodeStatus = 'draft' | 'complete' | 'needs-work';
 export type StatType = 'str' | 'wit' | 'charm' | 'neutral';
 export type GenreSlug =
@@ -47,6 +47,38 @@ export interface VRNEnding {
   text: string;
 }
 
+// ------------------------------------------------------------
+// Script lines (multi-character conversation) — DEPRECATED
+// Use VRNBlock[] (node.blocks) instead. Kept for migration.
+// ------------------------------------------------------------
+
+export interface VRNScriptLine {
+  id: string;
+  /** ID into VRNStory.characters; '' → use node's default character */
+  characterId: string;
+  text: string;
+  /** Overrides node-level mood for this line's TTS delivery only */
+  mood?: string;
+}
+
+// ------------------------------------------------------------
+// Blocks (unified content — replaces body + lines)
+// ------------------------------------------------------------
+
+export interface VRNBlock {
+  id: string;
+  /**
+   * 'prose' — narrative/descriptive text; read by narrator (or characterId if set).
+   * 'line'  — character dialogue; always has a characterId.
+   */
+  type: 'prose' | 'line';
+  text: string;
+  /** Character that speaks this block. Prose defaults to narrator if empty. */
+  characterId?: string;
+  /** Overrides node-level mood for this block's TTS delivery */
+  mood?: string;
+}
+
 export interface VRNChoice {
   id: string;
   /** Button text shown to the player */
@@ -83,7 +115,10 @@ export interface VRNNode {
   location?: string;
   /** Scene headline */
   title?: string;
-  /** Main narrative text (HTML allowed) */
+  /**
+   * Main narrative text (HTML allowed).
+   * Auto-derived from prose blocks (deriveBody) — kept for game engine compat.
+   */
   body: string;
   choices: VRNChoice[];
 
@@ -92,6 +127,15 @@ export interface VRNNode {
   character?: string;
   mood?: string;
   status: NodeStatus;
+  /**
+   * Unified content blocks (prose + dialogue lines interleaved).
+   * Replaces the old body/useScript/lines trio.
+   */
+  blocks?: VRNBlock[];
+  /** @deprecated Use blocks instead */
+  useScript?: boolean;
+  /** @deprecated Use blocks instead */
+  lines?: VRNScriptLine[];
   /** Rendered audio clip filenames: node_{id}_{character_slug}.mp3 */
   audio: string[];
   /**
@@ -104,11 +148,15 @@ export interface VRNNode {
 
   // --- Canvas layout (stripped on engine export) ---
   position: { x: number; y: number };
+  width?: number;
+  height?: number;
 }
 
 // ------------------------------------------------------------
 // Characters
 // ------------------------------------------------------------
+
+export type TTSProvider = 'qwen' | 'elevenlabs' | 'kokoro' | 'webspeech';
 
 export interface VRNCharacter {
   id: string;
@@ -118,7 +166,14 @@ export interface VRNCharacter {
   backstory: string;
   /** Tone, speech patterns, quirks */
   traits: string;
+  ttsProvider?: TTSProvider;
+  /** Free-form natural language voice design prompt for Qwen TTS */
+  qwenInstruct?: string;
+  /** True once the designer is satisfied with the voice — textarea becomes read-only */
+  voiceLocked?: boolean;
   elevenLabsVoiceId?: string;
+  kokoroVoice?: string;
+  kokoroSpeed?: number;
 }
 
 // ------------------------------------------------------------

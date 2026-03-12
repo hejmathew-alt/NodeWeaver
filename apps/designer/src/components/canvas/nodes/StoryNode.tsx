@@ -1,37 +1,63 @@
 'use client';
 
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { useState, useEffect } from 'react';
+import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import type { VRNNode } from '@void-runner/engine';
+import { useStoryStore } from '@/store/story';
+import { useSettingsStore, CANVAS_TEXT_CLASS } from '@/lib/settings';
+import { BlocksPreview } from './BlocksPreview';
 
-export function StoryNode({ data, selected }: NodeProps) {
+export function StoryNode({ id, data, selected }: NodeProps) {
   const node = data as unknown as VRNNode;
+  const { updateNodeSize, updateNode } = useStoryStore();
+  const canvasTextSize = useSettingsStore((s) => s.canvasTextSize);
+
+  const [editTitle, setEditTitle] = useState(node.title ?? '');
+  useEffect(() => { setEditTitle(node.title ?? ''); }, [node.title]);
+
   return (
     <div
-      className={`min-w-[200px] max-w-[280px] rounded-lg bg-white p-3 text-sm shadow-md transition-shadow ${
+      className={`flex w-full h-full flex-col rounded-lg bg-white p-2 ${CANVAS_TEXT_CLASS[canvasTextSize]} shadow-md overflow-hidden transition-shadow ${
         selected ? 'ring-2 ring-blue-400' : ''
       }`}
-      style={{ border: '2px solid #3b82f6' }}
+      style={{ border: '1px solid #3b82f6' }}
     >
+      <NodeResizer
+        color="#3b82f6"
+        isVisible={selected}
+        minWidth={160}
+        minHeight={80}
+        onResizeEnd={(_, { width, height }) => updateNodeSize(id, width, height)}
+      />
+
       <Handle type="target" position={Position.Top} className="!bg-blue-400" />
 
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-1 flex shrink-0 items-center gap-2">
         <span className="rounded bg-blue-600 px-1.5 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
           Story
         </span>
-        {node.status && (
-          <span className="text-xs text-slate-500">{node.status}</span>
-        )}
+        {node.status && <span className="text-xs text-slate-500">{node.status}</span>}
       </div>
 
-      {node.title && (
-        <p className="mb-1 font-semibold text-slate-900">{node.title}</p>
+      {selected ? (
+        <input
+          className="mb-1 w-full shrink-0 bg-transparent font-semibold text-slate-900 placeholder-slate-400 focus:outline-none"
+          placeholder="Scene title…"
+          value={editTitle}
+          onChange={(e) => setEditTitle(e.target.value)}
+          onBlur={() => { if (editTitle !== (node.title ?? '')) updateNode(id, { title: editTitle }); }}
+        />
+      ) : (
+        node.title && <p className="mb-1 shrink-0 font-semibold text-slate-900">{node.title}</p>
       )}
+
       {node.location && (
-        <p className="mb-2 text-xs text-slate-500">{node.location}</p>
+        <p className="mb-1 shrink-0 text-xs text-slate-500">{node.location}</p>
       )}
-      <p className="line-clamp-3 text-slate-600">
-        {node.body || <em className="text-slate-400">No content yet</em>}
-      </p>
+
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <BlocksPreview blocks={node.blocks ?? []} />
+      </div>
 
       <Handle type="source" position={Position.Bottom} className="!bg-blue-400" />
     </div>

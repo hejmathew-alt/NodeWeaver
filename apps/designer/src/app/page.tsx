@@ -6,6 +6,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { StoryCard } from '@/components/dashboard/StoryCard';
 import type { VRNStory, GenreSlug } from '@void-runner/engine';
+import { NARRATOR_DEFAULT } from '@/store/story';
 
 function createBlankStory(title: string, genre: GenreSlug): VRNStory {
   return {
@@ -20,7 +21,7 @@ function createBlankStory(title: string, genre: GenreSlug): VRNStory {
       updatedAt: new Date().toISOString(),
     },
     nodes: [],
-    characters: [],
+    characters: [NARRATOR_DEFAULT],
     lanes: [],
     enemies: {},
   };

@@ -9,10 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^2.0.4",
     "@void-runner/engine": "file:../../packages/engine",
     "@xyflow/react": "^12.10.1",
     "dexie": "^4.3.0",
     "dexie-react-hooks": "^4.2.0",
+    "nanoid": "^5.1.6",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
