@@ -261,6 +261,33 @@ Format: `type: short description`
 
 *Updated as work proceeds. Most recent first.*
 
+### Session 20 — 2026-03-18
+- **Test suite** — Full Vitest + Playwright setup, 76 tests passing (28 unit, 27 integration, 21 E2E):
+  - **`apps/designer/vitest.config.ts`** + **`playwright.config.ts`** — test runner config; Playwright `baseURL` on port 4000 (separate from dev :3001 and prod :3000)
+  - **`apps/designer/package.json`** — added `test:serve` (Next.js on :4000), `test:unit`, `test:integration`, `test:e2e`, `test:report` scripts; each writes its own JSON output file
+  - **`apps/designer/tests/`** — unit (`blocks`, `char-seed`, `constants`), integration (`api-stories`, `api-ai-generate`, `api-audio`, `api-tts`), E2E (`dashboard`, `node-editor`, `canvas`, `play-mode`) test suites
+  - **`apps/designer/scripts/generate-report.mjs`** — consolidates Vitest + Playwright JSON into `test-results/report.md`
+  - **`apps/designer/TESTING.md`** — full test documentation (stack, layout, prerequisites, run commands, troubleshooting)
+  - **`Run Tests.command`** + **`Test Server.command`** — double-click launchers at repo root; Run Tests auto-starts server on :4000 if not running, installs Playwright Chromium on first run, opens report on completion
+  - **`.claude/commands/test.md`** — `/test` slash command for running the suite from within Claude Code
+- **Security hardening** (from codebase review):
+  - **`src/app/api/stories/[id]/audio/route.ts`** — `safeAudioFilename()` regex whitelist, `export const config` body size limit (50 MB), MIME validation, atomic temp-file-then-rename writes
+  - **`src/app/api/stories/[id]/avatar/route.ts`** — `safeAvatarFilename()` regex, 10 MB limit, `image/png` MIME check, atomic writes
+  - **`src/app/api/avatar/generate/route.ts`** — `ALLOWED_COMFYUI_HOST` regex SSRF guard; rejects any non-localhost/LAN ComfyUI URL
+  - **`src/lib/comfyui-daemon.ts`** — subprocess `env` whitelisted to `PATH`, `HOME`, `PYTORCH_ENABLE_MPS_FALLBACK` only; removes wholesale `...process.env` inheritance
+  - **`src/lib/qwen-daemon.ts`** — same env whitelist applied; spawn failure logs underlying cause
+  - **`src/components/panels/NodeEditorPanel.tsx`** — SFX `linked.color` validated against `/^#[0-9a-f]{6}$/i` before CSS injection
+  - **`src/proxy.ts`** *(renamed from `middleware.ts`)* — `export default function proxy` satisfies Next.js 16 proxy convention; removes startup deprecation warning
+- **Code quality** (from codebase review):
+  - **`src/lib/ai-prompts.ts`** *(new)* — all 14 system prompts + 12 builder functions extracted from generate route; exports `buildSystemPrompt`, `buildUserMessage`, `NON_STREAMING_MODES`
+  - **`src/app/api/ai/generate/route.ts`** — shrunk from 841 lines to 110 lines (HTTP plumbing only); imports prompt builders from `lib/ai-prompts`
+  - **`src/lib/constants.ts`** *(new)* — `DEBOUNCE_PERSIST`, `DEBOUNCE_SPANS`, `AI_MAX_TOKENS`, `AI_MAX_TOKENS_DEFAULT`; already consumed by store and route
+  - **`packages/engine/src/types/index.ts`** — removed dead `kokoroVoice` and `kokoroSpeed` fields from `NWVCharacter` (0 usages since Session 4)
+  - **`src/lib/tts-player.ts`** — `scheduleBuffer` `catch {}` → `catch (err) { console.error(...) }`
+  - **`src/lib/audio-storage.ts`** — timestamp JSON parse `catch {}` → `console.warn` on corruption
+  - **`src/lib/voice-commands.ts`** — command JSON parse `catch {}` → `console.warn` on malformed AI response
+- **CLAUDE.md** — Future Ideas updated with full Canvas Direction + Narrative Quality + AI Tutor design session notes (canvas L→R spine, act columns, choice architecture tools, voice drift detector, tension curve visualiser, narrative health dashboard)
+
 ### Session 19 — 2026-03-18
 - **ComfyUI MPS fix** — Avatar generation was timing out with `BrokenPipeError: [Errno 32] Broken pipe` in the KSampler node on Apple Silicon:
   - **`apps/designer/src/lib/comfyui-daemon.ts`** — Added `'--force-fp16'` to ComfyUI spawn args; prevents fp32 MPS kernel gap that caused the broken pipe during KSampler inference
