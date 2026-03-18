@@ -32,7 +32,7 @@ export function EndNode({ id, data, selected }: NodeProps) {
         onResizeEnd={(_, { width, height }) => updateNodeSize(id, width, height)}
       />
 
-      <Handle type="target" position={Position.Top} className="!bg-orange-400" />
+      <Handle type="target" position={Position.Top} style={{ width: 10, height: 10 }} className="!bg-orange-400" />
 
       <div className="mb-1 flex shrink-0 items-center gap-2">
         <span className="rounded bg-orange-600 px-1.5 py-0.5 text-xs font-bold uppercase tracking-wider text-white">

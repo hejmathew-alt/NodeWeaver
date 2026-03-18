@@ -11,6 +11,11 @@ export function StartNode({ id, data, selected }: NodeProps) {
   const node = data as unknown as NWVNode;
   const updateNodeSize = useStoryStore((s) => s.updateNodeSize);
   const updateNode = useStoryStore((s) => s.updateNode);
+  const setCanvasPlayNodeId = useStoryStore((s) => s.setCanvasPlayNodeId);
+  const playingNodeId = useStoryStore((s) => s.playingNodeId);
+  const visitedNodeIds = useStoryStore((s) => s.visitedNodeIds);
+  const isPlaying = id === playingNodeId;
+  const wasVisited = !isPlaying && visitedNodeIds.includes(id);
   const canvasTextSize = useSettingsStore((s) => s.canvasTextSize);
 
   const [editTitle, setEditTitle] = useState(node.title ?? '');
@@ -22,7 +27,13 @@ export function StartNode({ id, data, selected }: NodeProps) {
       className={`flex w-full h-full flex-col rounded-lg bg-white p-2 ${CANVAS_TEXT_CLASS[canvasTextSize]} shadow-md overflow-hidden transition-shadow ${
         selected ? 'ring-2 ring-teal-400' : ''
       }`}
-      style={{ border: '1px solid #14b8a6' }}
+      style={{
+        border: '1px solid #14b8a6',
+        boxShadow: isPlaying
+          ? '0 0 0 4px rgba(20,184,166,1), 0 0 32px 8px rgba(20,184,166,0.55)'
+          : wasVisited ? '0 0 0 3px rgba(20,184,166,0.55), 0 0 14px rgba(20,184,166,0.35)' : undefined,
+        animation: isPlaying ? 'nodePulse 1.2s ease-in-out infinite' : undefined,
+      }}
     >
       <NodeResizer
         color="#14b8a6"
@@ -36,6 +47,20 @@ export function StartNode({ id, data, selected }: NodeProps) {
         <span className="rounded bg-teal-600 px-1.5 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
           Start
         </span>
+        {isPlaying && (
+          <span className="flex items-end gap-[2px]" style={{ height: 11 }}>
+            {[0, 1, 2].map(i => (
+              <span key={i} className="w-[3px] rounded-sm bg-teal-400"
+                style={{ height: 3, animation: `eqBar 0.45s ease-in-out ${i * 0.13}s infinite alternate` }} />
+            ))}
+          </span>
+        )}
+        <button
+          className="nodrag ml-auto rounded px-1 py-0.5 text-[9px] text-slate-300 hover:bg-teal-50 hover:text-teal-600 transition-colors"
+          title="Play from this node"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); setCanvasPlayNodeId(id); }}
+        >▶</button>
       </div>
 
       {selected ? (
@@ -55,7 +80,7 @@ export function StartNode({ id, data, selected }: NodeProps) {
       </div>
 
       {/* No target handle — nothing connects TO start */}
-      <Handle type="source" position={Position.Bottom} className="!bg-teal-400" />
+      <Handle type="source" position={Position.Bottom} style={{ width: 10, height: 10 }} className="!bg-teal-400" />
     </div>
   );
 }

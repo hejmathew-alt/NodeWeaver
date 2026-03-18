@@ -24,3 +24,37 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes nodePulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.82; }
+}
+
+@keyframes eqBar {
+  0%   { height: 3px; }
+  100% { height: 11px; }
+}
+
+/* React Flow handles — larger hit target for easier dragging */
+.react-flow__handle {
+  width: 10px !important;
+  height: 10px !important;
+}
+
+/* View crossfade transition */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fadeIn {
+  animation: fadeIn 250ms ease-out;
+}
+
+/* Voice dictation interim text — appears in contenteditable fields while speaking */
+.voice-interim {
+  color: #8b5cf6;
+  font-style: italic;
+  opacity: 0.6;
+  pointer-events: none;
+  user-select: none;
+}

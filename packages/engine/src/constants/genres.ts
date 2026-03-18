@@ -116,6 +116,26 @@ export const GENRE_META: Record<GenreSlug, GenreMeta> = {
       nodeTwist: '#4a2a1a',
     },
   },
+  survival: {
+    label: 'Survival',
+    brief:
+      'Extreme conditions, shrinking resources. The body has limits; the will tests them. Choices are immediate and irreversible — the wrong one ends everything here.',
+    voiceTestLines: [
+      "Twelve hours without water. Twelve more to the river, if the map is right.",
+      "The shelter won't last another night in this wind. We move at first light.",
+      "I found tracks this morning. Something large. It found our camp first.",
+      "Three matches left. I'm going to make them count.",
+      "She's burning up. The fever won't break. I don't know what I'm doing, but I'm not stopping.",
+      "The others want to go back. There is no back. Not anymore.",
+    ],
+    theme: {
+      background: '#060e06',
+      nodeStory: '#2a4a1a',
+      nodeCombat: '#5a2a0a',
+      nodeChat: '#1a3a1a',
+      nodeTwist: '#3a3a0a',
+    },
+  },
   cyberpunk: {
     label: 'Cyberpunk',
     brief:
@@ -134,6 +154,66 @@ export const GENRE_META: Record<GenreSlug, GenreMeta> = {
       nodeCombat: '#5a0a1a',
       nodeChat: '#0a3a1a',
       nodeTwist: '#4a0a6b',
+    },
+  },
+  comedy: {
+    label: 'Comedy',
+    brief:
+      'Timing is everything. Subvert expectations. Ground absurdity in real emotion. The best jokes land because the characters don\'t know they\'re funny.',
+    voiceTestLines: [
+      'I\'m not saying the plan was bad. I\'m saying the fire department now has our photo on their wall.',
+      'She said meet her at the restaurant at eight. I showed up at seven to practise looking casual.',
+      'The good news is we found the exit. The bad news is it\'s on the ceiling.',
+      'I read the instructions twice. That was my first mistake.',
+      'He delivered the speech with total confidence. Nobody had the heart to tell him his notes were upside down.',
+      'Technically, nothing exploded. I feel like we should celebrate that.',
+    ],
+    theme: {
+      background: '#14100a',
+      nodeStory: '#8a6d2a',
+      nodeCombat: '#7a3a1a',
+      nodeChat: '#2a6a3a',
+      nodeTwist: '#6a3a6a',
+    },
+  },
+  romance: {
+    label: 'Romance',
+    brief:
+      'Intimate, emotionally charged, tension-driven. Desire and restraint in equal measure. The unsaid word matters as much as the spoken one. Every scene should raise the stakes of the heart.',
+    voiceTestLines: [
+      "I told myself I wouldn't look for you tonight. I lied.",
+      "You always leave before things get complicated. Maybe that's why I keep letting you back in.",
+      "This was supposed to be simple. Nothing about you has ever been simple.",
+      "Some people walk into your life and rearrange everything without asking.",
+      "I don't need you to say anything. Just don't go.",
+      "Every time I think I'm done feeling this way, you smile, and I have to start over.",
+    ],
+    theme: {
+      background: '#1a0810',
+      nodeStory: '#7a2048',
+      nodeCombat: '#7a2a20',
+      nodeChat: '#3a1a4a',
+      nodeTwist: '#5a1a3a',
+    },
+  },
+  children: {
+    label: "Children's",
+    brief:
+      "Dark wit, preposterous adults, children who are quietly brilliant. The grotesque is funny here. Justice arrives — and it tends to be delightfully horrible for those who deserve it.",
+    voiceTestLines: [
+      "The adults thought they had thought of everything. They had not thought of her.",
+      "It was the most disgusting thing she had ever seen, and also, somehow, the most magnificent.",
+      "He was the worst sort of grown-up: absolutely certain he was right, and spectacularly wrong.",
+      "Nobody believed him at first. That was, of course, their catastrophic mistake.",
+      "She had spent years being underestimated. She found it very useful.",
+      "The punishment, they would later agree, had been remarkably fair.",
+    ],
+    theme: {
+      background: '#0a0f0a',
+      nodeStory: '#4a6a0a',
+      nodeCombat: '#6a3a0a',
+      nodeChat: '#1a4a2a',
+      nodeTwist: '#5a2a6a',
     },
   },
   custom: {
