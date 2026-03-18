@@ -144,6 +144,20 @@ export function aiContextToFlat(
     body: n.body?.slice(0, 100),
   }));
 
+  // World data — inject when present so AI writing stays grounded in the world
+  const world = story.world;
+  const worldContext: Record<string, string> = {};
+  if (world) {
+    if (world.locations.length > 0)
+      worldContext.worldLocations = world.locations.map((l) => `${l.name}: ${l.description}`).join('\n');
+    if (world.factions.length > 0)
+      worldContext.worldFactions = world.factions.map((f) => `${f.name}: ${f.ideology}`).join('\n');
+    if (world.rules.length > 0)
+      worldContext.worldRules = world.rules.join('\n');
+    if (world.lore.length > 0)
+      worldContext.worldLore = world.lore.map((e) => `${e.title}: ${e.content}`).join('\n');
+  }
+
   return {
     storyTitle: story.metadata?.title,
     genre: story.metadata?.genre,
@@ -159,5 +173,30 @@ export function aiContextToFlat(
     nextNodes,
     twistNodes,
     siblings: ctx.siblings.map((n) => ({ title: n.title || n.id, type: n.type })),
+    ...worldContext,
+  };
+}
+
+/**
+ * Flattens an AIContext into the shape needed by the audio-suggest mode.
+ * Includes full block texts with indices so the AI can match SFX to specific lines.
+ */
+export function aiContextToAudioSuggest(
+  ctx: AIContext,
+  story: NWVStory,
+  nodeId: string,
+): Record<string, unknown> {
+  const base = aiContextToFlat(ctx, story, nodeId);
+  const node = story.nodes.find((n) => n.id === nodeId);
+  return {
+    ...base,
+    blocks: (node?.blocks ?? []).map((b, i) => ({
+      index: i,
+      type: b.type,
+      text: b.text,
+      characterName: b.characterId
+        ? story.characters.find((c) => c.id === b.characterId)?.name
+        : undefined,
+    })),
   };
 }

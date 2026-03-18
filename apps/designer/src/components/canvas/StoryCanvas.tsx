@@ -6,6 +6,7 @@ import {
   ReactFlowProvider,
   Background,
   Controls,
+  ControlButton,
   MiniMap,
   BackgroundVariant,
   applyNodeChanges,
@@ -30,23 +31,29 @@ import { TwistNode } from './nodes/TwistNode';
 import { StartNode } from './nodes/StartNode';
 import { EndNode } from './nodes/EndNode';
 import { CanvasToolbar } from './CanvasToolbar';
+import { ChoiceEdge } from './edges/ChoiceEdge';
+import { FlowEditor } from '@/components/FlowEditor';
 import { autoLayout, pushOverlaps } from '@/lib/layout';
 import { NodeEditorPanel } from '@/components/panels/NodeEditorPanel';
-import { CharacterPanel } from '@/components/panels/CharacterPanel';
 import { SettingsPanel } from '@/components/panels/SettingsPanel';
+import { WorldPanel } from '@/components/panels/WorldPanel';
+import { LanePanel } from '@/components/panels/LanePanel';
+import { LaneOverlay } from '@/components/canvas/LaneOverlay';
 import {
   DndContext,
   DragOverlay,
   pointerWithin,
   useSensor,
   useSensors,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
 import type { NWVBlock } from '@nodeweaver/engine';
 import { DragPreview } from './nodes/CanvasBlock';
 import { useStoryStore } from '@/store/story';
+import { useVoiceStore } from '@/store/voice';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -64,10 +71,15 @@ const nodeTypes = {
   end: EndNode,
 };
 
+const edgeTypes = {
+  choice: ChoiceEdge,
+};
+
 // ── storyToFlow ───────────────────────────────────────────────────────────────
 
 interface StoryCanvasProps {
   story: NWVStory;
+  onToggleAVFX?: () => void;
 }
 
 function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
@@ -85,13 +97,12 @@ function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
       if (choice.next) {
         edges.push({
           id: `${node.id}-${choice.id}`,
+          type: 'choice',
           source: node.id,
           target: choice.next,
-          label: choice.flavour ?? '',
-          style: { stroke: '#64748b', strokeWidth: 1.5 },
-          labelStyle: { fill: '#94a3b8', fontSize: 11 },
-          labelBgStyle: { fill: '#f8fafc', fillOpacity: 0.85 },
-          data: { sourceId: node.id, choiceId: choice.id },
+          sourceHandle: choice.sourceHandle ?? undefined,
+          targetHandle: choice.targetHandle ?? undefined,
+          data: { sourceId: node.id, choiceId: choice.id, label: choice.label },
         });
       }
     }
@@ -185,13 +196,15 @@ interface PendingEdge {
 
 interface EdgeContextMenuProps {
   edge: PendingEdge;
+  unusedChoices: { id: string; label: string }[];
   onDelete: () => void;
   onInsert: (type: NodeType) => void;
   onAddChoice: () => void;
+  onReassign: (choiceId: string) => void;
   onClose: () => void;
 }
 
-function EdgeContextMenu({ edge, onDelete, onInsert, onAddChoice, onClose }: EdgeContextMenuProps) {
+function EdgeContextMenu({ edge, unusedChoices, onDelete, onInsert, onAddChoice, onReassign, onClose }: EdgeContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -221,6 +234,23 @@ function EdgeContextMenu({ edge, onDelete, onInsert, onAddChoice, onClose }: Edg
       style={{ position: 'fixed', left, top, zIndex: 1000 }}
       className="rounded-lg border border-slate-200 bg-white p-2 shadow-2xl"
     >
+      {unusedChoices.length > 0 && (
+        <>
+          <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-violet-400">
+            Reassign to
+          </p>
+          {unusedChoices.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => onReassign(c.id)}
+              className="mb-1 w-full truncate rounded px-3 py-1.5 text-left text-xs font-medium text-violet-700 transition-colors hover:bg-violet-50"
+            >
+              {c.label || '(unlabelled)'}
+            </button>
+          ))}
+          <hr className="my-1 border-slate-200" />
+        </>
+      )}
       <button
         onClick={onDelete}
         className="mb-1 w-full rounded px-3 py-1.5 text-left text-xs font-medium text-red-500 transition-colors hover:bg-red-50"
@@ -260,6 +290,7 @@ function EdgeContextMenu({ edge, onDelete, onInsert, onAddChoice, onClose }: Edg
 
 interface PendingConn {
   sourceId: string;
+  sourceHandle?: string;
   flowX: number;
   flowY: number;
   screenX: number;
@@ -274,29 +305,58 @@ interface InnerProps {
   panelExpanded: boolean;
   onToggleExpand: () => void;
   onResizeStart: (e: React.MouseEvent) => void;
+  flowMode: boolean;
+  onFlowMode: () => void;
+  panelHidden: boolean;
+  onTogglePanelHidden: () => void;
+  worldPanelOpen: boolean;
+  onToggleWorld: () => void;
+  lanesPanelOpen: boolean;
+  onToggleLanes: () => void;
+  onToggleAVFX?: () => void;
 }
 
-function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onResizeStart }: InnerProps) {
+function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onResizeStart, flowMode, onFlowMode, panelHidden, onTogglePanelHidden, worldPanelOpen, onToggleWorld, lanesPanelOpen, onToggleLanes, onToggleAVFX }: InnerProps) {
   const selectedNodeId = useStoryStore((s) => s.selectedNodeId);
   const selectedPanel = useStoryStore((s) => s.selectedPanel);
   const setSelectedNode = useStoryStore((s) => s.setSelectedNode);
   const deleteNode = useStoryStore((s) => s.deleteNode);
+  const undoDeleteNode = useStoryStore((s) => s.undoDeleteNode);
   const connectNodes = useStoryStore((s) => s.connectNodes);
   const batchUpdatePositions = useStoryStore((s) => s.batchUpdatePositions);
+  const avfxMode = useStoryStore((s) => s.avfxMode);
   const createNode = useStoryStore((s) => s.createNode);
   const deleteChoice = useStoryStore((s) => s.deleteChoice);
   const addChoice = useStoryStore((s) => s.addChoice);
+  const updateChoice = useStoryStore((s) => s.updateChoice);
   const insertNodeBetween = useStoryStore((s) => s.insertNodeBetween);
   const reorderBlock = useStoryStore((s) => s.reorderBlock);
   const moveBlockBetweenNodes = useStoryStore((s) => s.moveBlockBetweenNodes);
 
-  const { screenToFlowPosition, getNodes } = useReactFlow();
+  const voiceModeActive = useVoiceStore((s) => s.voiceModeActive);
+  const voiceStatus = useVoiceStore((s) => s.status);
+  const canvasPlayNodeId = useStoryStore((s) => s.canvasPlayNodeId);
+
+  const { screenToFlowPosition, getNodes, getNode, setCenter, getViewport } = useReactFlow();
+
+  // Smoothly pan to whichever node is being played
+  useEffect(() => {
+    if (!canvasPlayNodeId) return;
+    const rfNode = getNode(canvasPlayNodeId);
+    if (!rfNode) return;
+    const w = (rfNode.measured?.width as number | undefined) ?? 200;
+    const h = (rfNode.measured?.height as number | undefined) ?? 150;
+    const { zoom } = getViewport();
+    setCenter(rfNode.position.x + w / 2, rfNode.position.y + h / 2, { duration: 650, zoom });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasPlayNodeId]);
 
   const { nodes: initialNodes, edges: initialEdges } = storyToFlow(story);
   const [nodes, setNodes] = useNodesState(initialNodes);
   const [edges, setEdges] = useEdgesState(initialEdges);
   const [pendingConn, setPendingConn] = useState<PendingConn | null>(null);
   const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
+  const [canvasLocked, setCanvasLocked] = useState(false);
 
   // Re-sync React Flow state whenever the story changes
   useEffect(() => {
@@ -306,18 +366,41 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.nodes]);
 
-  // Keyboard delete (locked guard is in the store's deleteNode action)
+  // Auto-layout when Flow Mode created new nodes (mount-only)
+  useEffect(() => {
+    if (sessionStorage.getItem('nw:flowmode:runlayout') === '1') {
+      sessionStorage.removeItem('nw:flowmode:runlayout');
+      const t = setTimeout(() => handleAutoLayout(), 150);
+      return () => clearTimeout(t);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keyboard delete + undo
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const tag = target.tagName;
+      const inText = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+
+      // Cmd+Z / Ctrl+Z — undo last node deletion
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        if (!inText) {
+          e.preventDefault();
+          undoDeleteNode();
+          return;
+        }
+      }
+
+      // Delete / Backspace — remove selected node
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
-        const tag = (e.target as HTMLElement).tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if (inText) return;
         deleteNode(selectedNodeId);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedNodeId, deleteNode]);
+  }, [selectedNodeId, deleteNode, undoDeleteNode]);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
@@ -332,7 +415,12 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
   const onConnect: OnConnect = useCallback(
     (connection) => {
       if (connection.source && connection.target) {
-        connectNodes(connection.source, connection.target);
+        connectNodes(
+          connection.source,
+          connection.target,
+          connection.sourceHandle ?? undefined,
+          connection.targetHandle ?? undefined,
+        );
       }
     },
     [connectNodes],
@@ -347,6 +435,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
       const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
       setPendingConn({
         sourceId: connectionState.fromNode.id,
+        sourceHandle: connectionState.fromHandle?.id ?? undefined,
         flowX: flowPos.x,
         flowY: flowPos.y,
         screenX: e.clientX,
@@ -360,7 +449,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
     (type: NodeType) => {
       if (!pendingConn) return;
       const newId = createNode(type, { x: pendingConn.flowX, y: pendingConn.flowY });
-      if (newId) connectNodes(pendingConn.sourceId, newId);
+      if (newId) connectNodes(pendingConn.sourceId, newId, pendingConn.sourceHandle);
       setPendingConn(null);
     },
     [pendingConn, createNode, connectNodes],
@@ -403,6 +492,14 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
     setPendingEdge(null);
   }, [pendingEdge, addChoice]);
 
+  const handleEdgeReassign = useCallback((newChoiceId: string) => {
+    if (!pendingEdge) return;
+    // Link the selected choice to the target, disconnect the old one
+    updateChoice(pendingEdge.sourceId, newChoiceId, { next: pendingEdge.targetId });
+    updateChoice(pendingEdge.sourceId, pendingEdge.choiceId, { next: undefined });
+    setPendingEdge(null);
+  }, [pendingEdge, updateChoice]);
+
   // Live collision push — Option B: nudge overlapping nodes while dragging
   const onNodeDrag: OnNodeDrag = useCallback(
     (_, draggedNode) => {
@@ -442,12 +539,15 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
 
   const onPaneClick = useCallback(() => {
     setSelectedNode(null);
+    // Don't clear pendingConn here — onConnectEnd sets it on handle-drag-to-canvas,
+    // and the click event fires immediately after. NodePickerMenu closes itself.
   }, [setSelectedNode]);
 
   // ── Block drag & drop ────────────────────────────────────────────────────────
 
   const dndSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
   );
 
   const [activeBlockDrag, setActiveBlockDrag] = useState<{
@@ -524,7 +624,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
 
   return (
     <div className="flex h-full w-full flex-col">
-      <CanvasToolbar onAutoLayout={handleAutoLayout} />
+      <CanvasToolbar flowMode={flowMode} onFlowMode={onFlowMode} worldPanelOpen={worldPanelOpen} onToggleWorld={onToggleWorld} lanesPanelOpen={lanesPanelOpen} onToggleLanes={onToggleLanes} avfxMode={avfxMode} onToggleAVFX={onToggleAVFX} />
       <DndContext
         sensors={dndSensors}
         collisionDetection={pointerWithin}
@@ -532,11 +632,38 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
         onDragEnd={onDragEnd}
         onDragCancel={onDragCancel}
       >
-      <div className="flex flex-1 overflow-hidden">
+      <div
+        className="relative flex flex-1 overflow-hidden transition-shadow duration-300"
+        style={
+          voiceModeActive && voiceStatus === 'listening'
+            ? { boxShadow: '0 0 0 2px #ef4444, 0 0 32px 6px #ef444418' }
+            : undefined
+        }
+      >
+        {/* World panel — left side */}
+        {worldPanelOpen && (
+          <WorldPanel onClose={onToggleWorld} />
+        )}
+        {/* Lanes panel — left side (mutually exclusive with World) */}
+        {lanesPanelOpen && (
+          <LanePanel onClose={onToggleLanes} />
+        )}
+
+        {/* Panel collapse/expand tab — always visible on the right edge */}
+        <button
+          onClick={onTogglePanelHidden}
+          className="absolute top-1/3 bottom-1/3 right-0 z-30 flex w-4 items-center justify-center rounded-l bg-slate-200 text-slate-400 transition-colors hover:bg-slate-300 hover:text-slate-700"
+          title={panelHidden ? 'Show panel' : 'Hide panel for immersion'}
+        >
+          <svg width="5" height="10" viewBox="0 0 6 12" fill="currentColor">
+            <path d={panelHidden ? 'M0 0 L6 6 L0 12' : 'M6 0 L0 6 L6 12'} />
+          </svg>
+        </button>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -547,10 +674,14 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
           deleteKeyCode={null}
+          nodesDraggable={!canvasLocked}
+          nodesConnectable={!canvasLocked}
+          elementsSelectable={!canvasLocked}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           proOptions={{ hideAttribution: true }}
         >
+          <LaneOverlay story={story} />
           <Background
             variant={BackgroundVariant.Dots}
             bgColor="#f8fafc"
@@ -558,7 +689,17 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
             gap={24}
             size={1.5}
           />
-          <Controls className="!border-slate-200 !bg-white !text-slate-600" />
+          <Controls showInteractive={false} className="!border-slate-200 !bg-white !text-slate-600">
+            <ControlButton onClick={handleAutoLayout} title="Auto-arrange all nodes into a clean top-to-bottom tree">
+              ⬡
+            </ControlButton>
+            <ControlButton
+              onClick={() => setCanvasLocked((v) => !v)}
+              title={canvasLocked ? 'Unlock canvas' : 'Lock canvas'}
+            >
+              {canvasLocked ? '🔒' : '🔓'}
+            </ControlButton>
+          </Controls>
           <MiniMap
             nodeColor={(n) => {
               switch (n.type) {
@@ -590,14 +731,21 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
         {pendingEdge && (
           <EdgeContextMenu
             edge={pendingEdge}
+            unusedChoices={(() => {
+              const src = story.nodes.find((n) => n.id === pendingEdge.sourceId);
+              return (src?.choices ?? [])
+                .filter((c) => !c.next && c.id !== pendingEdge.choiceId)
+                .map((c) => ({ id: c.id, label: c.label }));
+            })()}
             onDelete={handleEdgeDelete}
             onInsert={handleEdgeInsert}
             onAddChoice={handleEdgeAddChoice}
+            onReassign={handleEdgeReassign}
             onClose={() => setPendingEdge(null)}
           />
         )}
 
-        {selectedNodeId && (
+        {!panelHidden && selectedNodeId && (
           <NodeEditorPanel
             panelWidth={panelWidth}
             isExpanded={panelExpanded}
@@ -605,15 +753,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
             onResizeStart={onResizeStart}
           />
         )}
-        {!selectedNodeId && selectedPanel === 'character' && (
-          <CharacterPanel
-            panelWidth={panelWidth}
-            isExpanded={panelExpanded}
-            onToggleExpand={onToggleExpand}
-            onResizeStart={onResizeStart}
-          />
-        )}
-        {!selectedNodeId && selectedPanel === 'settings' && (
+        {!panelHidden && !selectedNodeId && selectedPanel === 'settings' && (
           <SettingsPanel
             panelWidth={panelWidth}
             isExpanded={panelExpanded}
@@ -634,9 +774,25 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
 
 // ── Main export (wraps in ReactFlowProvider so inner can use useReactFlow) ────
 
-export function StoryCanvas({ story }: StoryCanvasProps) {
-  const [panelWidth, setPanelWidth]       = useState(PANEL_DEFAULT);
+export function StoryCanvas({ story, onToggleAVFX }: StoryCanvasProps) {
+  const [panelWidth, setPanelWidth]       = useState(PANEL_MAX);
   const [panelExpanded, setPanelExpanded] = useState(false);
+  const [panelHidden, setPanelHidden]     = useState(false);
+  const [flowMode, setFlowMode]           = useState(false);
+  const [worldPanelOpen, setWorldPanelOpen] = useState(false);
+  const [lanesPanelOpen, setLanesPanelOpen] = useState(false);
+
+  // Reset to max width whenever the node editor panel opens (closed → open)
+  // but not when simply switching from one node to another.
+  const selectedNodeId = useStoryStore((s) => s.selectedNodeId);
+  const prevNodeIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedNodeId && !prevNodeIdRef.current) {
+      setPanelWidth(PANEL_MAX);
+      setPanelExpanded(false);
+    }
+    prevNodeIdRef.current = selectedNodeId;
+  }, [selectedNodeId]);
 
   const toggleExpand = useCallback(() => {
     setPanelExpanded((e) => {
@@ -663,6 +819,11 @@ export function StoryCanvas({ story }: StoryCanvasProps) {
     window.addEventListener('mouseup', onUp);
   }, [panelWidth]);
 
+  // Flow Mode: replace React Flow canvas with the document editor
+  if (flowMode) {
+    return <FlowEditor story={story} onExit={() => setFlowMode(false)} />;
+  }
+
   return (
     <ReactFlowProvider>
       <StoryFlowInner
@@ -671,6 +832,15 @@ export function StoryCanvas({ story }: StoryCanvasProps) {
         panelExpanded={panelExpanded}
         onToggleExpand={toggleExpand}
         onResizeStart={startResize}
+        flowMode={flowMode}
+        onFlowMode={() => setFlowMode(true)}
+        panelHidden={panelHidden}
+        onTogglePanelHidden={() => setPanelHidden((h) => !h)}
+        worldPanelOpen={worldPanelOpen}
+        onToggleWorld={() => { setWorldPanelOpen((v) => !v); setLanesPanelOpen(false); }}
+        lanesPanelOpen={lanesPanelOpen}
+        onToggleLanes={() => { setLanesPanelOpen((v) => !v); setWorldPanelOpen(false); }}
+        onToggleAVFX={onToggleAVFX}
       />
     </ReactFlowProvider>
   );

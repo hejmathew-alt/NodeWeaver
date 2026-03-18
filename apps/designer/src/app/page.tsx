@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
 import { StoryCard } from '@/components/dashboard/StoryCard';
+import { QuickStartModal } from '@/components/dashboard/QuickStartModal';
+import { InspireModal } from '@/components/dashboard/InspireModal';
+import { GlobalSettingsModal } from '@/components/dashboard/GlobalSettingsModal';
 import type { NWVStory, GenreSlug } from '@nodeweaver/engine';
 import { NARRATOR_DEFAULT } from '@/store/story';
 
@@ -29,15 +30,59 @@ function createBlankStory(title: string, genre: GenreSlug): NWVStory {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const stories = useLiveQuery(() => db.stories.toArray(), []);
+  const [stories, setStories] = useState<NWVStory[] | undefined>(undefined);
+
+  const refreshStories = useCallback(async () => {
+    try {
+      const res = await fetch('/api/stories');
+      if (res.ok) setStories(await res.json() as NWVStory[]);
+    } catch {
+      setStories([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    async function init() {
+      await refreshStories();
+      // One-time silent migration: if server is empty, push IDB stories to server
+      try {
+        const { db } = await import('@/lib/db');
+        const idbStories = await db.stories.toArray();
+        if (idbStories.length === 0) return;
+        const serverRes = await fetch('/api/stories');
+        const serverStories: NWVStory[] = serverRes.ok ? await serverRes.json() : [];
+        if (serverStories.length > 0) return; // server already has data
+        await Promise.all(
+          idbStories.map((s) =>
+            fetch(`/api/stories/${encodeURIComponent(s.id)}`, {
+              method: 'PUT',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(s),
+            }).catch(() => {}),
+          ),
+        );
+        await refreshStories();
+      } catch (err) {
+        console.warn('[migration] IDB→server migration failed:', err);
+      }
+    }
+    init();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [showNewModal, setShowNewModal] = useState(false);
+  const [showQuickStart, setShowQuickStart] = useState(false);
+  const [showInspire, setShowInspire] = useState(false);
+  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newGenre, setNewGenre] = useState<GenreSlug>('sci-fi');
 
   const handleCreate = useCallback(async () => {
     const story = createBlankStory(newTitle || 'Untitled Story', newGenre);
-    await db.stories.add(story);
+    await fetch('/api/stories', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(story),
+    });
     setShowNewModal(false);
     setNewTitle('');
     router.push(`/story/${story.id}`);
@@ -45,9 +90,10 @@ export default function DashboardPage() {
 
   const handleDelete = useCallback(async (id: string) => {
     if (confirm('Delete this story? This cannot be undone.')) {
-      await db.stories.delete(id);
+      await fetch(`/api/stories/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      refreshStories();
     }
-  }, []);
+  }, [refreshStories]);
 
   const handleImport = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -56,16 +102,26 @@ export default function DashboardPage() {
       try {
         const text = await file.text();
         const story = JSON.parse(text) as NWVStory;
-        story.id = `story-${Date.now()}-imported`;
         story.metadata.updatedAt = new Date().toISOString();
-        await db.stories.add(story);
-        router.push(`/story/${story.id}`);
+        // If this story already exists on the server, navigate to it directly.
+        const existingRes = await fetch(`/api/stories/${encodeURIComponent(story.id)}`);
+        if (existingRes.ok) {
+          router.push(`/story/${story.id}`);
+        } else {
+          await fetch('/api/stories', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(story),
+          });
+          refreshStories();
+          router.push(`/story/${story.id}`);
+        }
       } catch {
         alert('Failed to import — invalid .nwv file');
       }
       e.target.value = '';
     },
-    [router]
+    [router, refreshStories],
   );
 
   return (
@@ -78,7 +134,17 @@ export default function DashboardPage() {
           </h1>
           <p className="mt-1 text-slate-500">Visual story weaving tool</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowGlobalSettings(true)}
+            className="rounded-lg border border-slate-200 p-2 text-slate-400 transition hover:border-slate-300 hover:text-slate-600"
+            title="Settings"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
           <label className="cursor-pointer rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 transition hover:border-slate-400 hover:text-slate-900">
             Import .nwv
             <input
@@ -88,6 +154,18 @@ export default function DashboardPage() {
               onChange={handleImport}
             />
           </label>
+          <button
+            className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 transition hover:bg-amber-100"
+            onClick={() => setShowInspire(true)}
+          >
+            ✦ Inspire Me
+          </button>
+          <button
+            className="rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 transition hover:bg-violet-100"
+            onClick={() => setShowQuickStart(true)}
+          >
+            ✨ Quick Start
+          </button>
           <button
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
             onClick={() => setShowNewModal(true)}
@@ -103,9 +181,15 @@ export default function DashboardPage() {
       ) : stories.length === 0 ? (
         <div className="flex flex-col items-center gap-4 py-24 text-center">
           <p className="text-xl text-slate-500">No stories yet</p>
-          <p className="text-slate-500">
-            Create a new story or import an .nwv file to get started.
+          <p className="text-slate-400 text-sm max-w-sm">
+            Use <strong className="text-violet-600">✨ Quick Start</strong> to let AI generate your first story structure, or create a blank canvas with <strong className="text-slate-600">+ New Story</strong>.
           </p>
+          <button
+            className="mt-2 rounded-lg bg-violet-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-violet-500 transition-colors"
+            onClick={() => setShowQuickStart(true)}
+          >
+            ✨ Quick Start
+          </button>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -113,6 +197,25 @@ export default function DashboardPage() {
             <StoryCard key={story.id} story={story} onDelete={handleDelete} />
           ))}
         </div>
+      )}
+
+      {/* Global settings modal */}
+      {showGlobalSettings && (
+        <GlobalSettingsModal onClose={() => setShowGlobalSettings(false)} />
+      )}
+
+      {/* Inspire modal */}
+      {showInspire && (
+        <InspireModal
+          onClose={() => setShowInspire(false)}
+          onStoriesChanged={refreshStories}
+          existingTitles={(stories ?? []).map(s => s.metadata.title).filter(Boolean)}
+        />
+      )}
+
+      {/* Quick Start modal */}
+      {showQuickStart && (
+        <QuickStartModal onClose={() => setShowQuickStart(false)} onStoriesChanged={refreshStories} />
       )}
 
       {/* New story modal */}
@@ -147,6 +250,7 @@ export default function DashboardPage() {
                 <option value="mystery-noir">Mystery / Noir</option>
                 <option value="post-apocalyptic">Post-Apocalyptic</option>
                 <option value="cyberpunk">Cyberpunk</option>
+                <option value="comedy">Comedy</option>
                 <option value="custom">Custom</option>
               </select>
             </div>

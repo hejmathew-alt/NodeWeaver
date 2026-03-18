@@ -8,6 +8,13 @@ import type {
   NWVCharacter,
   NWVScriptLine,
   NWVStoryMetadata,
+  NWVEnemy,
+  NWVWorldData,
+  NWVLocation,
+  NWVFaction,
+  NWVLoreEntry,
+  NWVVFXKeyframe,
+  NWVLane,
   NodeType,
 } from '@nodeweaver/engine';
 import { db } from '@/lib/db';
@@ -23,14 +30,20 @@ export const NARRATOR_DEFAULT: NWVCharacter = {
   backstory: '',
   traits: '',
   ttsProvider: 'qwen',
-  qwenInstruct:
-    'Male, late 40s to 50s, no strong regional accent — placeless, timeless. Deep, gravelly timbre with natural vocal weight and slow, deliberate pacing. Resonant chest voice with a slight roughness, like stone worn smooth by time. Calm and unhurried — each word chosen carefully, as if language itself is a rare resource. Poetic and measured delivery, with long, intentional pauses that feel vast rather than empty. Emotionally detached but not cold — ancient, observational, quietly inevitable. Like the universe narrating itself. Studio-quality recording.',
-  voiceLocked: false,
+  qwenInstruct: 'Female narrator, warm clear voice, measured unhurried delivery',
+  voiceLocked: true,
 };
 
 function ensureNarrator(characters: NWVCharacter[]): NWVCharacter[] {
-  if (characters.some((c) => c.id === 'narrator')) return characters;
-  return [NARRATOR_DEFAULT, ...characters];
+  const existing = characters.find((c) => c.id === 'narrator');
+  if (!existing) return [NARRATOR_DEFAULT, ...characters];
+  // Always enforce canonical voice on the narrator so it stays locked and consistent
+  if (existing.qwenInstruct === NARRATOR_DEFAULT.qwenInstruct && existing.voiceLocked) return characters;
+  return characters.map((c) =>
+    c.id === 'narrator'
+      ? { ...c, qwenInstruct: NARRATOR_DEFAULT.qwenInstruct, voiceLocked: true }
+      : c
+  );
 }
 
 // ── Store interface ──────────────────────────────────────────────────────────
@@ -38,9 +51,20 @@ function ensureNarrator(characters: NWVCharacter[]): NWVCharacter[] {
 interface StoryStore {
   activeStory: NWVStory | null;
   selectedNodeId: string | null;
-  selectedPanel: 'character' | 'settings' | null;
+  selectedPanel: 'settings' | null;
   selectedCharacterId: string | null;
+  activeView: 'canvas' | 'characters' | 'encounters';
   fileHandle: FileSystemFileHandle | null;
+  playFromNodeId: string | null;
+  canvasPlayNodeId: string | null;
+  undoStack: NWVStory[];
+  playingNodeId: string | null;
+  visitedNodeIds: string[];
+  chosenChoiceIds: string[];
+  avfxMode: boolean;
+  avfxNodeId: string | null;
+  avfxPlayheadMs: number;
+  avfxBlockDurationsMs: number[];
 
   // Load / persist
   loadStory: (id: string) => Promise<void>;
@@ -50,23 +74,31 @@ interface StoryStore {
 
   // Selection
   setSelectedNode: (id: string | null) => void;
-  setSelectedPanel: (panel: 'character' | 'settings' | null) => void;
+  setSelectedPanel: (panel: 'settings' | null) => void;
+  setActiveView: (view: 'canvas' | 'characters' | 'encounters') => void;
   setSelectedCharacter: (id: string | null) => void;
+  setPlayFromNodeId: (id: string | null) => void;
+  setCanvasPlayNodeId: (id: string | null) => void;
+  setPlayingNodeId: (id: string | null) => void;
+  addVisitedNode: (id: string) => void;
+  addChosenChoice: (choiceId: string) => void;
+  clearPlayHistory: () => void;
 
   // Node CRUD
   updateNode: (nodeId: string, patch: Partial<NWVNode>) => Promise<void>;
   createNode: (type: NodeType, position?: { x: number; y: number }) => string;
   deleteNode: (nodeId: string) => void;
+  undoDeleteNode: () => void;
   updateNodePosition: (nodeId: string, x: number, y: number) => void;
   batchUpdatePositions: (positions: { id: string; x: number; y: number }[]) => void;
 
   // Choice CRUD
-  addChoice: (nodeId: string) => string;
+  addChoice: (nodeId: string, defaults?: Partial<NWVChoice>) => string;
   updateChoice: (nodeId: string, choiceId: string, patch: Partial<NWVChoice>) => void;
   deleteChoice: (nodeId: string, choiceId: string) => void;
 
   // Connect two nodes (creates a choice on source pointing to target)
-  connectNodes: (sourceNodeId: string, targetNodeId: string) => void;
+  connectNodes: (sourceNodeId: string, targetNodeId: string, sourceHandle?: string, targetHandle?: string) => void;
 
   // Insert a new node between two connected nodes (splits the edge)
   insertNodeBetween: (sourceId: string, targetId: string, type: NodeType) => string;
@@ -82,7 +114,7 @@ interface StoryStore {
 
   // Block CRUD
   addBlock: (nodeId: string, type: 'prose' | 'line', defaultCharId?: string) => void;
-  updateBlock: (nodeId: string, blockId: string, patch: Partial<Omit<NWVBlock, 'id' | 'type'>>) => void;
+  updateBlock: (nodeId: string, blockId: string, patch: Partial<Omit<NWVBlock, 'id'>>) => void;
   deleteBlock: (nodeId: string, blockId: string) => void;
   moveBlock: (nodeId: string, blockId: string, dir: 'up' | 'down') => void;
   reorderBlock: (nodeId: string, blockId: string, newIndex: number) => void;
@@ -90,11 +122,54 @@ interface StoryStore {
 
   // Character CRUD
   addCharacter: () => void;
+  addCharacterNamed: (name: string) => string;
   updateCharacter: (id: string, patch: Partial<NWVCharacter>) => void;
   deleteCharacter: (id: string) => void;
 
+  // Audio
+  addBlockSfxCue: (nodeId: string, blockId: string, cue: import('@nodeweaver/engine').NWVSFXCue) => void;
+  removeBlockSfxCue: (nodeId: string, blockId: string, cueId: string) => void;
+  updateBlockSfxCue: (nodeId: string, blockId: string, cueId: string, patch: Partial<import('@nodeweaver/engine').NWVSFXCue>) => void;
+  updateNodeAudio: (nodeId: string, patch: { audio?: string[]; ambientPrompt?: string; musicPrompt?: string }) => void;
+  removeAudioFile: (nodeId: string, filename: string) => void;
+  clearAllSfxCues: () => void;
+
+  // Enemy CRUD
+  addEnemy: (key: string, enemy: NWVEnemy) => void;
+  updateEnemy: (key: string, patch: Partial<NWVEnemy>) => void;
+  deleteEnemy: (key: string) => void;
+
   // Metadata
   updateMetadata: (patch: Partial<NWVStoryMetadata>) => void;
+
+  // World Builder
+  updateWorld: (patch: Partial<NWVWorldData>) => void;
+  addLocation: (loc: NWVLocation) => void;
+  updateLocation: (id: string, patch: Partial<NWVLocation>) => void;
+  deleteLocation: (id: string) => void;
+  addFaction: (f: NWVFaction) => void;
+  updateFaction: (id: string, patch: Partial<NWVFaction>) => void;
+  deleteFaction: (id: string) => void;
+  updateWorldRules: (rules: string[]) => void;
+  addLoreEntry: (e: NWVLoreEntry) => void;
+  updateLoreEntry: (id: string, patch: Partial<NWVLoreEntry>) => void;
+  deleteLoreEntry: (id: string) => void;
+
+  // Lanes
+  addLane: () => string;
+  updateLane: (id: string, patch: Partial<NWVLane>) => void;
+  deleteLane: (id: string) => void;
+  assignNodeToLane: (nodeId: string, laneId: string) => void;
+  removeNodeFromLane: (nodeId: string, laneId: string) => void;
+
+  // AV FX mode
+  setAVFXMode: (active: boolean) => void;
+  setAVFXNodeId: (id: string | null) => void;
+  setAvfxPlayheadMs: (ms: number) => void;
+  setAvfxBlockDurationsMs: (durations: number[]) => void;
+  addVFXKeyframe: (nodeId: string, kf: NWVVFXKeyframe) => void;
+  updateVFXKeyframe: (nodeId: string, kfId: string, patch: Partial<NWVVFXKeyframe>) => void;
+  removeVFXKeyframe: (nodeId: string, kfId: string) => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -106,8 +181,32 @@ function stamp(story: NWVStory): NWVStory {
   };
 }
 
-async function persist(story: NWVStory) {
-  await db.stories.put(story);
+// Debounced (300ms) — avoids flooding the server on every keystroke
+let _persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+function persist(story: NWVStory): void {
+  if (_persistTimer !== null) clearTimeout(_persistTimer);
+  _persistTimer = setTimeout(() => {
+    _persistTimer = null;
+    fetch(`/api/stories/${encodeURIComponent(story.id)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(story),
+    }).catch((err) => console.error('[story] persist error:', err));
+  }, 300);
+}
+
+// Immediate write — used for explicit save actions (Cmd+S, saveStory)
+async function persistNow(story: NWVStory): Promise<void> {
+  if (_persistTimer !== null) {
+    clearTimeout(_persistTimer);
+    _persistTimer = null;
+  }
+  await fetch(`/api/stories/${encodeURIComponent(story.id)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(story),
+  });
 }
 
 // ── Store ────────────────────────────────────────────────────────────────────
@@ -117,13 +216,25 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   selectedNodeId: null,
   selectedPanel: null,
   selectedCharacterId: null,
+  activeView: 'canvas',
   fileHandle: null,
+  playFromNodeId: null,
+  canvasPlayNodeId: null,
+  undoStack: [],
+  playingNodeId: null,
+  visitedNodeIds: [],
+  chosenChoiceIds: [],
+  avfxMode: false,
+  avfxNodeId: null,
+  avfxPlayheadMs: 0,
+  avfxBlockDurationsMs: [],
 
   // ── Load / persist ──────────────────────────────────────────────────────────
 
   loadStory: async (id) => {
-    const story = await db.stories.get(id);
-    if (!story) return;
+    const res = await fetch(`/api/stories/${encodeURIComponent(id)}`);
+    if (!res.ok) return;
+    const story: NWVStory = await res.json();
     // Ensure Narrator always exists
     // Migrate any nodes that don't yet have blocks[]
     const patched: NWVStory = {
@@ -131,14 +242,14 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
       characters: ensureNarrator(story.characters),
       nodes: story.nodes.map(migrateNodeToBlocks),
     };
-    // Restore file handle from previous session (no permission prompt yet — lazy on first save)
+    // Restore file handle from previous session (browser-bound, stays in IDB)
     const record = await db.fileHandles.get(id);
     set({ activeStory: patched, selectedCharacterId: null, fileHandle: record?.handle ?? null });
     // Persist if anything was patched (narrator injected or nodes migrated)
     const needsPersist =
       patched.characters.length !== story.characters.length ||
       patched.nodes.some((n, i) => n.blocks !== story.nodes[i]?.blocks);
-    if (needsPersist) await persist(patched);
+    if (needsPersist) await persistNow(patched);
   },
 
   saveStory: async () => {
@@ -146,7 +257,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     if (!activeStory) return;
     const updated = stamp(activeStory);
     set({ activeStory: updated });
-    await persist(updated);
+    await persistNow(updated);
   },
 
   setFileHandle: (handle) => set({ fileHandle: handle }),
@@ -178,8 +289,22 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
       }
     }
 
-    await saveFile(activeStory, fileHandle);
-    return 'saved';
+    try {
+      await saveFile(activeStory, fileHandle);
+      return 'saved';
+    } catch (err) {
+      // Handle stale/revoked handle — clear it and prompt for a new file location
+      if (err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
+        set({ fileHandle: null });
+        await db.fileHandles.delete(activeStory.id).catch(() => {});
+        const newHandle = await saveFileAs(activeStory);
+        if (!newHandle) return 'cancelled';
+        setFileHandle(newHandle);
+        await db.fileHandles.put({ storyId: activeStory.id, handle: newHandle });
+        return 'saved-as';
+      }
+      throw err;
+    }
   },
 
   // ── Selection ───────────────────────────────────────────────────────────────
@@ -190,7 +315,20 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   setSelectedPanel: (panel) =>
     set({ selectedPanel: panel, selectedNodeId: panel ? null : get().selectedNodeId }),
 
+  setActiveView: (view) => set((s) => ({
+    activeView: s.activeView === view ? 'canvas' : view,
+  })),
+
   setSelectedCharacter: (id) => set({ selectedCharacterId: id }),
+
+  setPlayFromNodeId: (id) => set({ playFromNodeId: id }),
+  setCanvasPlayNodeId: (id) => set({ canvasPlayNodeId: id }),
+  setPlayingNodeId: (id) => set({ playingNodeId: id }),
+  addVisitedNode: (id) => set((s) => ({
+    visitedNodeIds: s.visitedNodeIds.includes(id) ? s.visitedNodeIds : [...s.visitedNodeIds, id],
+  })),
+  addChosenChoice: (choiceId) => set((s) => ({ chosenChoiceIds: [...s.chosenChoiceIds, choiceId] })),
+  clearPlayHistory: () => set({ visitedNodeIds: [], chosenChoiceIds: [] }),
 
   // ── Node CRUD ───────────────────────────────────────────────────────────────
 
@@ -199,9 +337,20 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     if (!activeStory) return;
     const updated = stamp({
       ...activeStory,
-      nodes: activeStory.nodes.map((n) =>
-        n.id === nodeId ? { ...n, ...patch } : n
-      ),
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const merged = { ...n, ...patch };
+        // Auto-create outcome choices when switching to combat type
+        if (patch.type === 'combat' && !merged.choices.some((c) => c.combatOutcome)) {
+          merged.interactionType = merged.interactionType ?? 'dice-combat';
+          merged.choices = [
+            ...merged.choices,
+            { id: crypto.randomUUID(), label: 'Victory', combatOutcome: 'victory' as const },
+            { id: crypto.randomUUID(), label: 'Defeat',  combatOutcome: 'defeat'  as const },
+          ];
+        }
+        return merged;
+      }),
     });
     set({ activeStory: updated });
     await persist(updated);
@@ -215,6 +364,10 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
       x: 380 + Math.random() * 160 - 80,
       y: 260 + Math.random() * 160 - 80,
     };
+    const combatChoices: NWVChoice[] = type === 'combat' ? [
+      { id: crypto.randomUUID(), label: 'Victory', combatOutcome: 'victory' },
+      { id: crypto.randomUUID(), label: 'Defeat',  combatOutcome: 'defeat'  },
+    ] : [];
     const node: NWVNode = {
       id,
       type,
@@ -222,11 +375,12 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
       location: '',
       body: '',
       blocks: [],
-      choices: [],
+      choices: combatChoices,
       status: 'draft',
       audio: [],
       lanes: [],
       position: pos,
+      ...(type === 'combat' ? { interactionType: 'dice-combat' } : {}),
     };
     const updated = stamp({
       ...activeStory,
@@ -238,7 +392,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   },
 
   deleteNode: (nodeId) => {
-    const { activeStory, selectedNodeId } = get();
+    const { activeStory, selectedNodeId, undoStack } = get();
     if (!activeStory) return;
     const target = activeStory.nodes.find((n) => n.id === nodeId);
     if (target?.locked) return;
@@ -256,8 +410,17 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     set({
       activeStory: updated,
       selectedNodeId: selectedNodeId === nodeId ? null : selectedNodeId,
+      undoStack: [...undoStack.slice(-9), activeStory],
     });
     persist(updated);
+  },
+
+  undoDeleteNode: () => {
+    const { undoStack } = get();
+    if (undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    set({ activeStory: previous, undoStack: undoStack.slice(0, -1) });
+    persist(previous);
   },
 
   updateNodePosition: (nodeId, x, y) => {
@@ -290,14 +453,14 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
 
   // ── Choice CRUD ─────────────────────────────────────────────────────────────
 
-  addChoice: (nodeId) => {
+  addChoice: (nodeId, defaults) => {
     const { activeStory } = get();
     if (!activeStory) return '';
     const choiceId = crypto.randomUUID();
     const blank: NWVChoice = {
       id: choiceId,
       label: '',
-      type: 'neutral',
+      ...defaults,
     };
     const updated = stamp({
       ...activeStory,
@@ -347,14 +510,17 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
 
   // ── Connect ─────────────────────────────────────────────────────────────────
 
-  connectNodes: (sourceNodeId, targetNodeId) => {
+  connectNodes: (sourceNodeId, targetNodeId, sourceHandle?, targetHandle?) => {
     const { activeStory, addChoice, updateChoice } = get();
     if (!activeStory || sourceNodeId === targetNodeId) return;
     const source = activeStory.nodes.find((n) => n.id === sourceNodeId);
     if (!source) return;
     if (source.choices.some((c) => c.next === targetNodeId)) return;
     const choiceId = addChoice(sourceNodeId);
-    updateChoice(sourceNodeId, choiceId, { next: targetNodeId });
+    const patch: Partial<NWVChoice> = { next: targetNodeId };
+    if (sourceHandle) patch.sourceHandle = sourceHandle;
+    if (targetHandle) patch.targetHandle = targetHandle;
+    updateChoice(sourceNodeId, choiceId, patch);
   },
 
   // ── Insert between ──────────────────────────────────────────────────────────
@@ -378,7 +544,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
       location: '',
       body: '',
       blocks: [],
-      choices: [{ id: crypto.randomUUID(), label: '', type: 'neutral', next: targetId }],
+      choices: [{ id: crypto.randomUUID(), label: '', next: targetId }],
       status: 'draft',
       audio: [],
       lanes: [],
@@ -506,7 +672,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
           id: nanoid(),
           type,
           text: '',
-          ...(type === 'line' ? { characterId: charId ?? '' } : {}),
+          characterId: type === 'line' ? (charId ?? '') : 'narrator',
         };
         const newBlocks = [...blocks, blank];
         return { ...n, blocks: newBlocks, body: deriveBody(newBlocks) };
@@ -640,6 +806,29 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     persist(updated);
   },
 
+  addCharacterNamed: (name) => {
+    const { activeStory } = get();
+    if (!activeStory) return '';
+    const id = `char_${crypto.randomUUID().slice(0, 8)}`;
+    const newChar: NWVCharacter = {
+      id,
+      name,
+      role: '',
+      backstory: '',
+      traits: '',
+      ttsProvider: 'qwen',
+      qwenInstruct: '',
+      voiceLocked: false,
+    };
+    const updated = stamp({
+      ...activeStory,
+      characters: [...activeStory.characters, newChar],
+    });
+    set({ activeStory: updated });
+    persist(updated);
+    return id;
+  },
+
   updateCharacter: (id, patch) => {
     const { activeStory } = get();
     if (!activeStory) return;
@@ -667,6 +856,132 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     persist(updated);
   },
 
+  // ── Audio ──────────────────────────────────────────────────────────────────
+
+  addBlockSfxCue: (nodeId, blockId, cue) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        return { ...n, blocks: (n.blocks ?? []).map((b) =>
+          b.id === blockId ? { ...b, sfxCues: [...(b.sfxCues ?? []), cue] } : b
+        ) };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  removeBlockSfxCue: (nodeId, blockId, cueId) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        return { ...n, blocks: (n.blocks ?? []).map((b) =>
+          b.id === blockId ? { ...b, sfxCues: (b.sfxCues ?? []).filter((c) => c.id !== cueId) } : b
+        ) };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  updateBlockSfxCue: (nodeId, blockId, cueId, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        return { ...n, blocks: (n.blocks ?? []).map((b) =>
+          b.id === blockId ? { ...b, sfxCues: (b.sfxCues ?? []).map((c) =>
+            c.id === cueId ? { ...c, ...patch } : c
+          ) } : b
+        ) };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  updateNodeAudio: (nodeId, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId ? { ...n, ...patch } : n
+      ),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  removeAudioFile: (nodeId, filename) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        return {
+          ...n,
+          audio: n.audio.filter((f) => f !== filename),
+          blocks: (n.blocks ?? []).map((b) => ({
+            ...b,
+            sfxCues: (b.sfxCues ?? []).filter((c) => c.filename !== filename),
+          })),
+        };
+      }),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  clearAllSfxCues: () => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) => ({
+        ...n,
+        blocks: (n.blocks ?? []).map((b) => ({ ...b, sfxCues: [] })),
+      })),
+    });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  // ── Enemies ──────────────────────────────────────────────────────────────────
+
+  addEnemy: (key, enemy) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({ ...activeStory, enemies: { ...activeStory.enemies, [key]: enemy } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  updateEnemy: (key, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({ ...activeStory, enemies: { ...activeStory.enemies,
+      [key]: { ...activeStory.enemies[key], ...patch } } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  deleteEnemy: (key) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { [key]: _removed, ...rest } = activeStory.enemies;
+    const updated = stamp({ ...activeStory, enemies: rest });
+    set({ activeStory: updated }); persist(updated);
+  },
+
   // ── Metadata ────────────────────────────────────────────────────────────────
 
   updateMetadata: (patch) => {
@@ -678,5 +993,208 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     });
     set({ activeStory: updated });
     persist(updated);
+  },
+
+  // ── World Builder ────────────────────────────────────────────────────────────
+
+  updateWorld: (patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const existing = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...existing, ...patch } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  addLocation: (loc) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world, locations: [...world.locations, loc] } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  updateLocation: (id, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world,
+      locations: world.locations.map((l) => l.id === id ? { ...l, ...patch } : l) } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  deleteLocation: (id) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world,
+      locations: world.locations.filter((l) => l.id !== id) } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  addFaction: (f) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world, factions: [...world.factions, f] } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  updateFaction: (id, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world,
+      factions: world.factions.map((f) => f.id === id ? { ...f, ...patch } : f) } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  deleteFaction: (id) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world,
+      factions: world.factions.filter((f) => f.id !== id) } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  updateWorldRules: (rules) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world, rules } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  addLoreEntry: (e) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world, lore: [...world.lore, e] } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  updateLoreEntry: (id, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world,
+      lore: world.lore.map((e) => e.id === id ? { ...e, ...patch } : e) } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  deleteLoreEntry: (id) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const world = activeStory.world ?? { locations: [], factions: [], rules: [], lore: [] };
+    const updated = stamp({ ...activeStory, world: { ...world,
+      lore: world.lore.filter((e) => e.id !== id) } });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  // ── AV FX mode ───────────────────────────────────────────────────────────────
+
+  setAVFXMode: (active) => set({ avfxMode: active }),
+  setAVFXNodeId: (id) => set({ avfxNodeId: id }),
+  setAvfxPlayheadMs: (ms) => set({ avfxPlayheadMs: ms }),
+  setAvfxBlockDurationsMs: (durations) => set({ avfxBlockDurationsMs: durations }),
+
+  addVFXKeyframe: (nodeId, kf) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId ? { ...n, vfxKeyframes: [...(n.vfxKeyframes ?? []), kf] } : n
+      ),
+    });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  updateVFXKeyframe: (nodeId, kfId, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId
+          ? { ...n, vfxKeyframes: (n.vfxKeyframes ?? []).map((k) => k.id === kfId ? { ...k, ...patch } : k) }
+          : n
+      ),
+    });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  removeVFXKeyframe: (nodeId, kfId) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId
+          ? { ...n, vfxKeyframes: (n.vfxKeyframes ?? []).filter((k) => k.id !== kfId) }
+          : n
+      ),
+    });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  // ── Lane actions ─────────────────────────────────────────────────────────
+
+  addLane: () => {
+    const { activeStory } = get();
+    if (!activeStory) return '';
+    const PALETTE = ['#f43f5e', '#f59e0b', '#10b981', '#0ea5e9', '#8b5cf6', '#64748b', '#f97316', '#14b8a6'];
+    const colour = PALETTE[(activeStory.lanes ?? []).length % PALETTE.length];
+    const lane: NWVLane = { id: nanoid(), name: 'New Lane', colour, description: '' };
+    const updated = stamp({ ...activeStory, lanes: [...(activeStory.lanes ?? []), lane] });
+    set({ activeStory: updated }); persist(updated);
+    return lane.id;
+  },
+
+  updateLane: (id, patch) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      lanes: (activeStory.lanes ?? []).map((l) => l.id === id ? { ...l, ...patch } : l),
+    });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  deleteLane: (id) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      lanes: (activeStory.lanes ?? []).filter((l) => l.id !== id),
+      nodes: activeStory.nodes.map((n) => ({ ...n, lanes: (n.lanes ?? []).filter((lid) => lid !== id) })),
+    });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  assignNodeToLane: (nodeId, laneId) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId && !(n.lanes ?? []).includes(laneId)
+          ? { ...n, lanes: [...(n.lanes ?? []), laneId] }
+          : n
+      ),
+    });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  removeNodeFromLane: (nodeId, laneId) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const updated = stamp({
+      ...activeStory,
+      nodes: activeStory.nodes.map((n) =>
+        n.id === nodeId ? { ...n, lanes: (n.lanes ?? []).filter((lid) => lid !== laneId) } : n
+      ),
+    });
+    set({ activeStory: updated }); persist(updated);
   },
 }));

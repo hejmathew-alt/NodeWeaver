@@ -5,15 +5,36 @@
 // ============================================================
 
 export type NodeType = 'story' | 'combat' | 'chat' | 'twist' | 'start' | 'end';
+
+// ------------------------------------------------------------
+// Audio timestamps
+// ------------------------------------------------------------
+
+/**
+ * A single word's timing within a TTS audio file.
+ * Produced by faster-whisper (Qwen) or ElevenLabs /with-timestamps.
+ */
+export interface WordTimestamp {
+  /** The word text (stripped of surrounding whitespace). */
+  word: string;
+  /** Start time in milliseconds from the start of the audio clip. */
+  start_ms: number;
+  /** End time in milliseconds from the start of the audio clip. */
+  end_ms: number;
+}
+export type InteractionType = 'dice-combat';
 export type NodeStatus = 'draft' | 'complete' | 'needs-work';
-export type StatType = 'str' | 'wit' | 'charm' | 'neutral';
 export type GenreSlug =
   | 'sci-fi'
   | 'fantasy'
   | 'horror'
   | 'mystery-noir'
   | 'post-apocalyptic'
+  | 'survival'
   | 'cyberpunk'
+  | 'comedy'
+  | 'romance'
+  | 'children'
   | 'custom';
 
 // ------------------------------------------------------------
@@ -21,17 +42,11 @@ export type GenreSlug =
 // ------------------------------------------------------------
 
 export interface NWVEffects {
-  str?: number;
-  wit?: number;
-  charm?: number;
   /** Sets state.flags[flag] = true */
   flag?: string;
 }
 
 export interface NWVRequirement {
-  str?: number;
-  wit?: number;
-  charm?: number;
   /** Choice only visible if state.flags[flag] is truthy */
   flag?: string;
 }
@@ -83,6 +98,39 @@ export interface NWVBlock {
   tone?: string;
   /** Qwen bracket tag: [Voice: X] — per-block texture override */
   voiceTexture?: string;
+  /** ElevenLabs per-block stability override (0–1). Shown as slider when character uses EL. */
+  elevenLabsStability?: number;
+  /** ElevenLabs per-block similarity boost override (0–1). */
+  elevenLabsSimilarity?: number;
+  /** ElevenLabs per-block style override (0–1). */
+  elevenLabsStyle?: number;
+  /** Timed sound effect cues that fire during this block's playback */
+  sfxCues?: NWVSFXCue[];
+  /** Pre-rendered TTS filename (ref into _audio/). Set by Finalise for Release. */
+  ttsAudioFile?: string;
+  /** Cache key for auto-cached EL TTS (text|voiceId|stability|similarity|style).
+   *  If set and mismatches current key, cached file is skipped and regenerated. */
+  ttsAudioHash?: string;
+}
+
+export interface NWVSFXCue {
+  id: string;
+  /** Generated audio filename (ref into _audio/ folder) */
+  filename: string;
+  /** Text prompt used to generate (kept for regeneration) */
+  prompt: string;
+  /** Word index in the block text this cue is anchored to (0-based).
+   *  Undefined = unlinked (uses raw offsetMs instead). */
+  wordIndex?: number;
+  /** Fine-tune offset in ms relative to the word anchor (negative = earlier, positive = later).
+   *  Only applied when wordIndex is set. Defaults to 0. */
+  wordOffsetMs?: number;
+  /** Delay in ms from block start. Computed from wordIndex at playback when linked. */
+  offsetMs: number;
+  /** Duration of the generated clip in seconds */
+  duration: number;
+  /** Hex color for visual linking (e.g. '#f59e0b') */
+  color?: string;
 }
 
 export interface NWVChoice {
@@ -91,7 +139,6 @@ export interface NWVChoice {
   label: string;
   /** Brief narrative beat shown on canvas edge (designer only) */
   flavour?: string;
-  type: StatType;
   /** ID of the next NWVNode */
   next?: string;
   /** Intermediate consequence screen text */
@@ -107,6 +154,12 @@ export interface NWVChoice {
   echoOpening?: string;
   /** Inline ending — bypasses scene transition */
   ending?: NWVEnding;
+  /** For Interactive nodes — marks this choice as a combat outcome route */
+  combatOutcome?: 'victory' | 'defeat' | 'escape';
+  /** React Flow handle ID on the source node (e.g. 'bottom', 'left', 'right') */
+  sourceHandle?: string;
+  /** React Flow handle ID on the target node (e.g. 'top', 'target-left', 'target-right') */
+  targetHandle?: string;
 }
 
 // ------------------------------------------------------------
@@ -144,8 +197,12 @@ export interface NWVNode {
   useScript?: boolean;
   /** @deprecated Use blocks instead */
   lines?: NWVScriptLine[];
-  /** Rendered audio clip filenames: node_{id}_{character_slug}.mp3 */
+  /** Audio filenames: ambient_*, music_*, legacy node_* clips */
   audio: string[];
+  /** Text prompt used to generate ambient audio for this scene */
+  ambientPrompt?: string;
+  /** Text prompt used to generate background music for this scene */
+  musicPrompt?: string;
   /**
    * Lane membership:
    *   []          = no lane
@@ -154,6 +211,15 @@ export interface NWVNode {
    */
   lanes: string[];
 
+  // --- Interactive node (combat) ---
+  /** Subtype for Interactive nodes — determines which mechanic runs in PlayMode */
+  interactionType?: InteractionType;
+  /** Key into NWVStory.enemies — for dice-combat */
+  combatEnemy?: string;
+
+  // --- Visual FX keyframes (designer-only, stripped on engine export) ---
+  vfxKeyframes?: NWVVFXKeyframe[];
+
   // --- Canvas layout (stripped on engine export) ---
   position: { x: number; y: number };
   width?: number;
@@ -161,10 +227,31 @@ export interface NWVNode {
 }
 
 // ------------------------------------------------------------
+// Visual Effects
+// ------------------------------------------------------------
+
+export type VFXEffectType = 'blur' | 'brightness' | 'vignette' | 'tint' | 'flicker' | 'shake' | 'textOpacity' | 'saturation' | 'contrast';
+
+export interface NWVVFXKeyframe {
+  id: string;
+  /** Offset from node start in milliseconds */
+  timeMs: number;
+  /** Which CSS visual effect to apply */
+  effect: VFXEffectType;
+  /** Effect value — px for blur/shake, 0–1 for brightness/textOpacity, hex for tint */
+  value: number | string;
+  /** CSS transition duration in milliseconds */
+  transitionMs: number;
+  /** Optional natural language description */
+  prompt?: string;
+}
+
+// ------------------------------------------------------------
 // Characters
 // ------------------------------------------------------------
 
-export type TTSProvider = 'qwen' | 'elevenlabs' | 'kokoro' | 'webspeech';
+export type TTSProvider = 'qwen' | 'elevenlabs';
+export type ArtStyle = 'realistic' | 'illustrated' | 'manga' | 'graphic_novel' | 'dark_fantasy' | 'ink_sketch' | 'pixel_art' | 'chibi';
 
 export interface NWVCharacter {
   id: string;
@@ -175,19 +262,50 @@ export interface NWVCharacter {
   /** Tone, speech patterns, quirks */
   traits: string;
   ttsProvider?: TTSProvider;
+
+  // ── Qwen TTS ──────────────────────────────────────────────────────────────
   /** Free-form natural language voice design prompt for Qwen TTS */
   qwenInstruct?: string;
-  /** True once the designer is satisfied with the voice — textarea becomes read-only */
-  voiceLocked?: boolean;
+  /** Default emotion for Qwen bracket tags: [Emotional: X] */
+  defaultEmotion?: string;
+  /** Default tone for Qwen bracket tags: [Tone: X] */
+  defaultTone?: string;
+  /** Default voice texture for Qwen bracket tags: [Voice: X] */
+  defaultVoiceTexture?: string;
+
+  // ── ElevenLabs TTS ────────────────────────────────────────────────────────
+  /** Voice design description used to generate the EL voice */
+  elevenLabsDescription?: string;
+  /** Accent for EL voice generation: american | british | australian | indian | african */
+  elevenLabsAccent?: string;
+  /** Gender for EL voice generation: male | female */
+  elevenLabsGender?: string;
+  /** Saved ElevenLabs voice ID (set after Create & Lock) */
   elevenLabsVoiceId?: string;
+  /** EL voice stability (0–1). Higher = more consistent. Default 0.5 */
+  elevenLabsStability?: number;
+  /** EL voice similarity boost (0–1). Default 0.75 */
+  elevenLabsSimilarity?: number;
+  /** EL voice style exaggeration (0–1). Default 0.0 */
+  elevenLabsStyle?: number;
+
+  // ── Shared ────────────────────────────────────────────────────────────────
+  /** True once the designer is satisfied with the voice — fields become read-only */
+  voiceLocked?: boolean;
+
+  // ── Kokoro TTS ────────────────────────────────────────────────────────────
   kokoroVoice?: string;
   kokoroSpeed?: number;
-  /** Default emotion for blocks using this character */
-  defaultEmotion?: string;
-  /** Default tone for blocks using this character */
-  defaultTone?: string;
-  /** Default voice texture for blocks using this character */
-  defaultVoiceTexture?: string;
+
+  // ── Portrait / Avatar ──────────────────────────────────────────────────────
+  /** Natural language appearance description for image generation */
+  avatarPrompt?: string;
+  /** Filename in _avatars/ folder (e.g. "avatar-{id}.png") */
+  avatarFile?: string;
+  /** ComfyUI seed — undefined = random each time, set when locked */
+  avatarSeed?: number;
+  /** Freeze seed so regenerations stay visually consistent */
+  avatarLocked?: boolean;
 }
 
 // ------------------------------------------------------------
@@ -220,6 +338,40 @@ export interface NWVEnemy {
 }
 
 // ------------------------------------------------------------
+// World Builder
+// ------------------------------------------------------------
+
+export interface NWVLocation {
+  id: string;
+  name: string;
+  description: string;
+  atmosphere: string;
+}
+
+export interface NWVFaction {
+  id: string;
+  name: string;
+  ideology: string;
+  leader: string;
+  /** Relationship to the protagonist */
+  relation: string;
+}
+
+export interface NWVLoreEntry {
+  id: string;
+  title: string;
+  content: string;
+}
+
+export interface NWVWorldData {
+  locations: NWVLocation[];
+  factions: NWVFaction[];
+  /** Plain-text world rules / constraints */
+  rules: string[];
+  lore: NWVLoreEntry[];
+}
+
+// ------------------------------------------------------------
 // Top-level story file
 // ------------------------------------------------------------
 
@@ -231,6 +383,8 @@ export interface NWVStoryMetadata {
   logline: string;
   targetTone: string;
   coverColour?: string;
+  /** Project-level art style for character portrait generation */
+  artStyle?: ArtStyle;
   createdAt: string;
   updatedAt: string;
 }
@@ -243,6 +397,7 @@ export interface NWVStory {
   characters: NWVCharacter[];
   lanes: NWVLane[];
   enemies: Record<string, NWVEnemy>;
+  world?: NWVWorldData;
 }
 
 // ------------------------------------------------------------
@@ -250,9 +405,6 @@ export interface NWVStory {
 // ------------------------------------------------------------
 
 export interface NWVPlayerState {
-  str: number;
-  wit: number;
-  charm: number;
   hp: number;
   chapter: number;
   flags: Record<string, boolean>;
@@ -260,4 +412,25 @@ export interface NWVPlayerState {
   echoMemory: Array<{ role: 'user' | 'assistant'; content: string }>;
   conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
   postEchoNodeId: string | null;
+}
+
+// ------------------------------------------------------------
+// Audio generation (SFX / Ambient / Music)
+// ------------------------------------------------------------
+
+export type AudioGenType = 'sfx' | 'ambient' | 'music';
+
+export interface AudioGenRequest {
+  type: AudioGenType;
+  prompt: string;
+  /** Duration in seconds. SFX: 3–10, Ambient: 5–60, Music: 5–60 */
+  duration?: number;
+}
+
+export interface AudioGenResult {
+  type: AudioGenType;
+  filename: string;
+  prompt: string;
+  /** Actual duration of the generated clip in seconds */
+  duration: number;
 }

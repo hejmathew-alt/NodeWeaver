@@ -17,15 +17,21 @@ const NODE_BUTTONS: {
   { type: 'twist',  label: '+ Twist',  colour: '#a855f7', hoverBg: 'hover:bg-purple-50' },
 ];
 
-interface CanvasToolbarProps { onAutoLayout: () => void; }
+interface CanvasToolbarProps {
+  flowMode?: boolean;
+  onFlowMode?: () => void;
+  worldPanelOpen?: boolean;
+  onToggleWorld?: () => void;
+  lanesPanelOpen?: boolean;
+  onToggleLanes?: () => void;
+  avfxMode?: boolean;
+  onToggleAVFX?: () => void;
+}
 
-export function CanvasToolbar({ onAutoLayout }: CanvasToolbarProps) {
+export function CanvasToolbar({ flowMode = false, onFlowMode, worldPanelOpen = false, onToggleWorld, lanesPanelOpen = false, onToggleLanes, avfxMode = false, onToggleAVFX }: CanvasToolbarProps) {
   const createNode = useStoryStore((s) => s.createNode);
-  const setSelectedPanel = useStoryStore((s) => s.setSelectedPanel);
-  const selectedPanel = useStoryStore((s) => s.selectedPanel);
-
-  const isCharPanelOpen     = selectedPanel === 'character';
-  const isSettingsPanelOpen = selectedPanel === 'settings';
+  const activeView = useStoryStore((s) => s.activeView);
+  const setActiveView = useStoryStore((s) => s.setActiveView);
 
   return (
     <div className="flex items-center gap-1 border-b border-slate-200 bg-white px-3 py-1.5">
@@ -42,45 +48,101 @@ export function CanvasToolbar({ onAutoLayout }: CanvasToolbarProps) {
 
       <div className="mx-2 h-4 w-px bg-slate-200" />
 
-      <button
-        onClick={onAutoLayout}
-        className="rounded px-3 py-1 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-100"
-        style={{ border: '1px solid #64748b33' }}
-        title="Auto-arrange all nodes into a clean top-to-bottom tree"
-      >
-        ⬡ Auto Arrange
-      </button>
+      {onToggleWorld && (
+        <button
+          onClick={onToggleWorld}
+          className="flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-cyan-50"
+          style={{
+            color: worldPanelOpen ? '#fff' : '#0891b2',
+            border: '1px solid #0891b255',
+            backgroundColor: worldPanelOpen ? '#0891b2' : undefined,
+          }}
+        >
+          <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"><circle cx="7" cy="7" r="6"/><ellipse cx="7" cy="7" rx="2.8" ry="6"/><line x1="1.2" y1="5" x2="12.8" y2="5"/><line x1="1.2" y1="9" x2="12.8" y2="9"/></svg> World
+        </button>
+      )}
 
-      <div className="mx-2 h-4 w-px bg-slate-200" />
+      {onToggleLanes && (
+        <button
+          onClick={onToggleLanes}
+          className="flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-sky-50"
+          style={{
+            color: lanesPanelOpen ? '#fff' : '#0369a1',
+            border: '1px solid #0369a155',
+            backgroundColor: lanesPanelOpen ? '#0369a1' : undefined,
+          }}
+          title="Story Lanes — group nodes into parallel narrative threads"
+        >
+          <svg width="11" height="11" viewBox="0 0 14 14" fill="currentColor" className="shrink-0">
+            <rect x="1" y="1" width="3" height="12" rx="1"/>
+            <rect x="5.5" y="1" width="3" height="12" rx="1"/>
+            <rect x="10" y="1" width="3" height="12" rx="1"/>
+          </svg>
+          Lanes
+        </button>
+      )}
+
+      {onToggleAVFX && (
+        <button
+          onClick={onToggleAVFX}
+          className="flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-violet-50"
+          style={{
+            color: avfxMode ? '#fff' : '#7c3aed',
+            border: '1px solid #7c3aed55',
+            backgroundColor: avfxMode ? '#7c3aed' : undefined,
+          }}
+          title="Audio Visual FX — DAW-style timeline editor"
+        >
+          <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2 10V5l4-2 4 2v5"/><circle cx="6" cy="11" r="1.5"/><circle cx="10" cy="10" r="1.5"/><line x1="6" y1="9.5" x2="10" y2="8.5"/></svg>
+          Audio Visual FX
+        </button>
+      )}
 
       <button
-        onClick={() => setSelectedPanel(isCharPanelOpen ? null : 'character')}
-        className="rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-violet-50"
+        onClick={() => setActiveView('characters')}
+        className="flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-violet-50"
         style={{
-          color: isCharPanelOpen ? '#fff' : '#7c3aed',
+          color: activeView === 'characters' ? '#fff' : '#7c3aed',
           border: '1px solid #7c3aed55',
-          backgroundColor: isCharPanelOpen ? '#7c3aed' : undefined,
+          backgroundColor: activeView === 'characters' ? '#7c3aed' : undefined,
         }}
+        title="Characters"
       >
+        <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="4.5" r="2.5"/><path d="M2 13c0-2.76 2.24-5 5-5s5 2.24 5 5"/></svg>
         Characters
       </button>
 
       <button
-        onClick={() => setSelectedPanel(isSettingsPanelOpen ? null : 'settings')}
-        className="rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-slate-100"
+        onClick={() => setActiveView('encounters')}
+        className="flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-red-50"
         style={{
-          color: isSettingsPanelOpen ? '#fff' : '#64748b',
-          border: '1px solid #64748b44',
-          backgroundColor: isSettingsPanelOpen ? '#64748b' : undefined,
+          color: activeView === 'encounters' ? '#fff' : '#ef4444',
+          border: '1px solid #ef444455',
+          backgroundColor: activeView === 'encounters' ? '#ef4444' : undefined,
         }}
-        title="Settings"
+        title="Encounters"
       >
-        ⚙ Settings
+        <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="2" y1="2" x2="12" y2="12"/><line x1="12" y1="2" x2="2" y2="12"/><line x1="1" y1="3.5" x2="3.5" y2="1"/><line x1="10.5" y1="13" x2="13" y2="10.5"/></svg>
+        Encounters
       </button>
 
-      <div className="ml-auto text-xs text-slate-400">
-        Click a button to add a node · Drag a handle to empty space to add &amp; connect
-      </div>
+      {onFlowMode && (
+        <>
+          <div className="mx-2 h-4 w-px bg-slate-200" />
+          <button
+            onClick={onFlowMode}
+            className="rounded px-3 py-1 text-xs font-medium transition-colors"
+            style={{
+              color: flowMode ? '#fff' : '#4f46e5',
+              border: '1px solid #4f46e544',
+              backgroundColor: flowMode ? '#4f46e5' : undefined,
+            }}
+            title="Switch to flow document editor"
+          >
+            ≡ Flow Mode
+          </button>
+        </>
+      )}
     </div>
   );
 }
