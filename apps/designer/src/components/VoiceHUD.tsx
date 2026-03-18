@@ -57,6 +57,8 @@ export function VoiceHUD({ story }: VoiceHUDProps) {
   } = useStoryStore();
 
   const speakerRef = useRef<TTSPlayer | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
   const storyRef = useRef(story);
   useEffect(() => { storyRef.current = story; }, [story]);
   const selectedNodeIdRef = useRef(selectedNodeId);
@@ -85,6 +87,7 @@ export function VoiceHUD({ story }: VoiceHUDProps) {
             ...narrator,
             qwenInstruct: voiceAssistantInstruct || narrator.qwenInstruct,
           };
+          if (!mountedRef.current) return;
           const player = new TTSPlayer();
           speakerRef.current = player;
           await player.playLine(text, assistantChar, { temperature: 0.3 });

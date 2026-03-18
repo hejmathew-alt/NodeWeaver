@@ -4,9 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
+    "test:serve": "next dev --hostname 0.0.0.0 --port 4000",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "mkdir -p test-results && vitest run --reporter=verbose --reporter=json --outputFile=./test-results/vitest-results.json; playwright test; node scripts/generate-report.mjs",
+    "test:unit": "vitest run tests/unit --reporter=verbose --reporter=json --outputFile=./test-results/vitest-unit-results.json",
+    "test:integration": "vitest run tests/integration --reporter=verbose --reporter=json --outputFile=./test-results/vitest-integration-results.json",
+    "test:e2e": "playwright test",
+    "test:report": "node scripts/generate-report.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",
@@ -24,13 +30,16 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@playwright/test": "^1.50.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "jsdom": "^26.0.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.0"
   }
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { nanoid } from 'nanoid';
+import { DEBOUNCE_PERSIST } from '@/lib/constants';
 import type {
   NWVStory,
   NWVNode,
@@ -65,6 +66,8 @@ interface StoryStore {
   avfxNodeId: string | null;
   avfxPlayheadMs: number;
   avfxBlockDurationsMs: number[];
+  /** Set when an auto-save PUT fails; cleared once the UI has displayed it */
+  persistError: string | null;
 
   // Load / persist
   loadStory: (id: string) => Promise<void>;
@@ -170,6 +173,7 @@ interface StoryStore {
   addVFXKeyframe: (nodeId: string, kf: NWVVFXKeyframe) => void;
   updateVFXKeyframe: (nodeId: string, kfId: string, patch: Partial<NWVVFXKeyframe>) => void;
   removeVFXKeyframe: (nodeId: string, kfId: string) => void;
+  clearPersistError: () => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -181,8 +185,10 @@ function stamp(story: NWVStory): NWVStory {
   };
 }
 
-// Debounced (300ms) — avoids flooding the server on every keystroke
+// Debounced — avoids flooding the server on every keystroke
 let _persistTimer: ReturnType<typeof setTimeout> | null = null;
+// Captured at store init so persist() can surface errors without a circular dep
+let _setError: ((msg: string) => void) | null = null;
 
 function persist(story: NWVStory): void {
   if (_persistTimer !== null) clearTimeout(_persistTimer);
@@ -192,8 +198,12 @@ function persist(story: NWVStory): void {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(story),
-    }).catch((err) => console.error('[story] persist error:', err));
-  }, 300);
+    }).catch((err) => {
+      const msg = err instanceof Error ? err.message : 'Auto-save failed';
+      console.error('[story] persist error:', err);
+      _setError?.(msg);
+    });
+  }, DEBOUNCE_PERSIST);
 }
 
 // Immediate write — used for explicit save actions (Cmd+S, saveStory)
@@ -211,7 +221,10 @@ async function persistNow(story: NWVStory): Promise<void> {
 
 // ── Store ────────────────────────────────────────────────────────────────────
 
-export const useStoryStore = create<StoryStore>((set, get) => ({
+export const useStoryStore = create<StoryStore>((set, get) => {
+  // Capture set so the module-level persist() can surface errors to the UI
+  _setError = (msg) => set({ persistError: msg });
+  return {
   activeStory: null,
   selectedNodeId: null,
   selectedPanel: null,
@@ -228,6 +241,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   avfxNodeId: null,
   avfxPlayheadMs: 0,
   avfxBlockDurationsMs: [],
+  persistError: null,
 
   // ── Load / persist ──────────────────────────────────────────────────────────
 
@@ -1197,4 +1211,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     });
     set({ activeStory: updated }); persist(updated);
   },
-}));
+
+  clearPersistError: () => set({ persistError: null }),
+}});
+

@@ -54,7 +54,8 @@ export async function fetchCommandIntent(
 
   try {
     return JSON.parse(data.command) as VoiceCommandResult;
-  } catch {
+  } catch (err) {
+    console.warn('[voice-commands] Malformed command JSON from AI:', err);
     return null;
   }
 }

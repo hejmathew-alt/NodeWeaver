@@ -2,4 +2,4 @@
 cd "$(dirname "$0")"
 echo "🧵 Starting NodeWeaver on http://localhost:3001 ..."
 echo ""
-pnpm dev
+pnpm dev --port 3001

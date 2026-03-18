@@ -7,8 +7,9 @@
  * Prerequisites: run `bash servers/setup-comfyui.sh` once to clone + install.
  */
 
-import { spawn, exec, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
+import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -38,9 +39,12 @@ async function isAlreadyUp(): Promise<boolean> {
   }
 }
 
+/** Probe COMFYUI_PORT with a TCP connection — no shell interpolation. */
 function freePort(): Promise<void> {
   return new Promise((resolve) => {
-    exec(`lsof -ti :${COMFYUI_PORT} | xargs kill -9 2>/dev/null || true`, () => resolve());
+    const probe = net.createConnection({ port: COMFYUI_PORT, host: '127.0.0.1' });
+    probe.on('connect', () => { probe.destroy(); resolve(); });
+    probe.on('error', () => resolve());
   });
 }
 
@@ -97,8 +101,11 @@ async function spawnAndWait(): Promise<void> {
         // Run from comfyui/ directory so it resolves relative model paths
         cwd: path.dirname(COMFYUI_SCRIPT),
         stdio: ['ignore', 'pipe', 'pipe'],
+        // Explicit env whitelist — do not spread process.env to avoid leaking
+        // API keys and other secrets into the ComfyUI subprocess.
         env: {
-          ...process.env,
+          PATH: process.env.PATH ?? '',
+          HOME: process.env.HOME ?? '',
           // Allow MPS ops that lack native kernels to fall back to CPU
           // instead of raising BrokenPipeError / RuntimeError during KSampler
           PYTORCH_ENABLE_MPS_FALLBACK: '1',

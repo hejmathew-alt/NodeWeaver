@@ -206,6 +206,7 @@ export function PlayMode({ story, startNodeId, onExit }: { story: NWVStory; star
     musicPlayerRef.current = new SFXPlayer();
     sfxPlayerRef.current = new SFXPlayer();
     return () => {
+      playingRef.current = false;
       playerRef.current?.dispose();
       ambientPlayerRef.current?.dispose();
       musicPlayerRef.current?.dispose();

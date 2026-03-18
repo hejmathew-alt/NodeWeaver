@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -351,7 +351,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasPlayNodeId]);
 
-  const { nodes: initialNodes, edges: initialEdges } = storyToFlow(story);
+  const { nodes: initialNodes, edges: initialEdges } = useMemo(() => storyToFlow(story), [story]);
   const [nodes, setNodes] = useNodesState(initialNodes);
   const [edges, setEdges] = useEdgesState(initialEdges);
   const [pendingConn, setPendingConn] = useState<PendingConn | null>(null);

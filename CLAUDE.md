@@ -181,6 +181,38 @@ Context builder (`lib/context-builder.ts`) does BFS from roots to build: ancestr
 
 ---
 
+## Code Quality Standards
+
+*Standing rules distilled from codebase reviews. Apply these in all new and modified code.*
+
+### Security
+- **Secrets**: API keys and tokens live only in `.env.local` (gitignored via `.env*`). Never hardcode or log them. Never spread `process.env` into subprocess `env` — pass an explicit whitelist (`PATH`, `HOME`, and only what the subprocess needs).
+- **Filename inputs**: Any user-supplied filename used in a server-side file operation must be validated with a strict regex before use. `path.basename()` alone is not sufficient. Example: `/^(tts|sfx|ambient|music)_[a-z0-9]{16}[a-z0-9_-]*\.(wav|mp3|json)$/.test(filename)`.
+- **Shell commands**: Never interpolate user-controlled or configurable values into shell strings. Use Node.js APIs (`net`, `fs`, `child_process` with argument arrays) instead of `exec()` with template strings.
+- **Colour values**: Before inserting any colour string into a CSS `style` attribute via `innerHTML`, validate with `/^#[0-9a-f]{6}$/i`. `escapeHtml()` on the text content is not enough.
+
+### Error Handling
+- **Don't swallow errors silently**: Every `catch {}` block must at minimum `console.error`. Prefer surfacing errors to the user for operations they initiated.
+- **Fire-and-forget only for non-critical persistence**: Timestamp saves, IDB caches, and speculative pre-generation may be fire-and-forget. Story persist (`store/story.ts`) must surface failures — if a PUT to `/api/stories/[id]` fails, the user should know.
+- **Type-narrow caught errors**: `catch (err)` → `if (err instanceof Error) console.error(err.message); else console.error(err)`. Never use `err.message` directly on `unknown`.
+
+### React & TypeScript
+- **Memoize expensive derivations**: Any function that traverses the full node/block graph (e.g. `storyToFlow()`) must be wrapped in `useMemo` with the correct dependency. Don't call it naked in render.
+- **Document intentional eslint-disable**: When disabling `react-hooks/exhaustive-deps` for a RAF loop or stable ref pattern, add a one-line comment explaining why (e.g. `// RAF attaches once; reads storyRef for latest data`).
+- **Unsafe casts**: `as unknown as X` is a code smell. If you need it, add a comment explaining why TypeScript can't infer correctly, and narrow the type at the boundary instead if possible.
+
+### Memory Leaks
+- Every `setInterval`, `setTimeout`, `addEventListener`, and RAF loop started inside a `useEffect` must be cleaned up in the effect's return function.
+- For intervals inside async IIFEs (e.g. playback loops): move the interval ID out of the IIFE so the `useEffect` cleanup can reach it. Or check `isMounted` at the top of the interval callback.
+
+### Daemon / Subprocess Paths
+- All server script paths and venv paths are rooted at `os.homedir() + 'Documents/NodeWeaver/servers/'`. Follow the pattern established in `comfyui-daemon.ts`. Never hardcode paths from a previous project location.
+
+### Constants
+- Debounce timings, token limits, and other magic numbers belong in named constants, not inline literals. Prefer adding them to the relevant module (e.g. `DEBOUNCE_PERSIST` near the top of `store/story.ts`) rather than scattering them as bare numbers.
+
+---
+
 ## Git Practices
 
 ### Branch Strategy
@@ -474,6 +506,108 @@ Format: `type: short description`
 
 *Captured during conversations. Not commitments.*
 
+---
+
+### Canvas Direction & Narrative Quality (Design Session)
+
+**1. Canvas Direction Change: Top-to-Bottom → Left-to-Right with Central Spine**
+
+Reorient the node canvas from vertical flow to horizontal flow with a central spine running left to right.
+
+*Spine model:*
+- A single clearly marked critical path runs left to right — the backbone of the story
+- All branches diverge above or below the spine and must converge back within the same act column
+- Branches that never rejoin the spine are flagged automatically
+- The spine is architecturally distinct (distinct visual weight, colour, or layer)
+
+*Act columns:*
+- Replace current vertical lanes with vertical act columns — e.g. `ACT 1 | ACT 2 | ACT 3 | ACT 4`
+- The spine passes through each act column left to right
+- Branches live inside act columns, never spanning act boundaries unresolved
+- Act boundaries act as gates — nothing crosses unresolved
+- Existing lane logic is ~70% of the way there; this is primarily a reframe
+
+*Zoom-dependent rendering:*
+- Macro view: collapsed act clusters, spine visible, branch density readable at a glance
+- Micro view: individual nodes with full detail
+- Zoom level determines which representation renders
+
+**2. Multiple Simultaneous Views (Same Underlying Data)**
+
+| View | Purpose | Author Role |
+|------|---------|------------|
+| Outline view | Story development, beat planning | Writer |
+| Node/graph view | Branch logic, state flags, connections | Designer |
+| Timeline/tension view | Pacing, emotional curve | Director |
+| Playtest view | Linear experience simulation | Player |
+
+The existing Focus Mode is the foundation of the Outline/Writer view — extend, not replace.
+
+**3. Narrative Quality Tooling**
+
+*3.1 Choice Architecture Tools:*
+- **Consequence graph analyser** — overlay highlighting "dead" choices: branches that reconverge too quickly or never get referenced downstream
+- **Choice weight scoring panel** — tag each choice with stakes (low/medium/high), moral dimension (yes/no), payoff distance (nodes until this matters); warn if consecutive choices score low across all three
+- **Branch coverage heatmap** — playtest simulation running N random paths, visualising nodes hit rarely or never
+- **30-node rule enforcement** — warn when a player can travel more than 30 nodes without hitting a spine beat
+
+*3.2 Character Voice Consistency:*
+- **Per-character voice bible editor** — structured sidebar per character: vocabulary used/never used, sentence length, emotional register, speech tics; feeds directly into AI generation prompts
+- **Voice drift detector** — post-generation Claude API call scoring each line against the character's voice bible, flagging outliers with a confidence score (e.g. "This line sounds 60% like Kira, 40% like Narrator — review?")
+- **Dialogue diff view** — side-by-side old vs. new on regeneration, with character voice deltas highlighted
+
+*3.3 Pacing & Tension Tools:*
+- **Tension curve visualiser** — tag each node with an emotional beat (calm / rising tension / peak / reversal / release / cliffhanger); render as a waveform across a linear playthrough; compare against a user-defined target curve per episode
+- **Word/beat budget tracker** — per scene, track estimated reading/listening time; warn when a sequence exceeds threshold without a player decision or audio beat change
+- **Act structure overlay** — canvas layer marking cold open, act breaks, and climax nodes
+- **"Yes, and / Yes, but / No, but" tagger** — tag each node exit with its improv/TV pattern; surface flat "yes, and" chains that indicate low-tension sequences
+- **ABCD beat checker** — for each scene, validate presence of: A (main tension driver), B (character/emotional thread), C (something changes), D (what pulls the player forward)
+
+*3.4 AI Generation Quality:*
+- **Context packet builder** — before any AI generation call, automatically assemble: last N significant player choices, active character relationship states, world state flags, relevant voice bibles, planned jaw-dropping beats. Highest-leverage single feature for generation quality.
+- **Causality prompt enforcer** — generation mode that requires the AI to state why this scene follows from the previous one (because/therefore logic) before writing; strips reasoning from output but uses it for coherence validation
+- **Regeneration with constraints** — structured partial regen modes: "keep the plot, rewrite the voice" / "keep the voice, raise the stakes" / "make this choice feel harder"
+- **Consistency checker node** — special non-rendering node type that fires a Claude API call at playtest time, feeding surrounding context and asking "does this scene contradict anything established earlier?"
+
+*3.5 Blind Mode / Audio QA:*
+- **Audio-only preview mode** — strip all visual context and play a scene with TTS only, inside NodeWeaver; mandatory QA step before shipping
+- **Ambiguity linter** — flag lines containing visual references ("the red door", "you can see", "on the left") that are meaningless in blind mode
+
+**4. AI Narrative Tutor**
+
+Philosophy: the tutor operates as a dramaturg, not a generator. It asks questions, surfaces structural weaknesses, and offers options — it does not decide. Keeps the author's voice intact while providing professional-level structural guidance.
+
+*Features:*
+- **"What if" suggester** — at any node, offer 4–5 dramatically distinct one-sentence direction options, each tagged by dramatic function: Betrayal / Revelation / Escalation / Breathing room / Complication
+- **Socratic story coach** — asks structural questions rather than suggesting content (e.g. "You haven't established why the player should care about this character yet — what do you want them to feel here?")
+- **"Earn it" checker** — for each planned jaw-dropping moment, review preceding nodes and assess whether setup earns the payoff; flags underearned beats with specific references to what's missing
+- **Dramatic function gap detector** — analyses the current act and identifies what's structurally absent (e.g. "You have strong setup and a peak but no reversal before the act break")
+- **"Stranger test" prompt** — for each jaw-dropping moment, evaluate: would a stranger knowing nothing else feel something here?
+
+*Integration point:* Focus Mode text editor — a sidebar aware of graph position, surrounding nodes, and context packet. Not autocomplete; a well-read colleague.
+
+**5. Narrative Health Dashboard**
+
+A single per-episode quality scorecard aggregating:
+- Choice depth score
+- Tension curve vs. target
+- Voice consistency warnings
+- Blind mode coverage %
+- Consequence graph dead-branch count
+- ABCD beat completion rate
+
+Embeds editorial quality into the tool so future authors get guardrails by default.
+
+**Implementation Priority Suggestion:**
+1. Canvas reorientation (L→R spine + act columns) — structural foundation
+2. Focus Mode tutor panel — highest authoring value, leverages existing mode
+3. Emotional beat tagging + tension curve visualiser — makes the canvas readable
+4. Context packet builder — unlocks quality AI generation and tutor features
+5. Voice bible editor + drift detector — protects character consistency at scale
+6. Narrative health dashboard — synthesis layer, built last when sub-components exist
+
+---
+
 - ~~AI Sound FX / Audio Generation~~ — **Implemented in Session 2**
 - ~~Audio WAV→MP3 compression~~ — **Implemented in Session 11**
 - **ZIP export bundling** — Bundle `.nwv` + `_audio/` folder into a single ZIP for browsers without File System Access API.
@@ -656,3 +790,5 @@ After `mkcert -install`, restart the dev server. The server now runs at `https:/
 ## Known Bugs
 
 - **Voice on iPad over LAN** — Resolved once mkcert CA is trusted on iPad (see Pending Setup above). After iPad trust is set up, voice mode works at `https://192.168.86.23:3000`.
+
+- ~~**`middleware` deprecation warning on dev server start**~~ — Fixed in Session 20: renamed `src/middleware.ts` → `src/proxy.ts`.

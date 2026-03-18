@@ -293,10 +293,6 @@ export interface NWVCharacter {
   /** True once the designer is satisfied with the voice — fields become read-only */
   voiceLocked?: boolean;
 
-  // ── Kokoro TTS ────────────────────────────────────────────────────────────
-  kokoroVoice?: string;
-  kokoroSpeed?: number;
-
   // ── Portrait / Avatar ──────────────────────────────────────────────────────
   /** Natural language appearance description for image generation */
   avatarPrompt?: string;

@@ -4,8 +4,14 @@
     {
       "name": "nodeweaver",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": ["run", "dev", "--", "--port", "3001"],
       "port": 3001
+    },
+    {
+      "name": "nodeweaver-test",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "designer", "test:serve"],
+      "port": 4000
     }
   ]
 }

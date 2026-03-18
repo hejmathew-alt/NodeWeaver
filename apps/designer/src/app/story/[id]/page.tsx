@@ -40,10 +40,19 @@ export default function StoryEditorPage() {
   const voiceEnabled = useSettingsStore((s) => s.voiceEnabled);
   const avfxMode = useStoryStore((s) => s.avfxMode);
   const setAVFXMode = useStoryStore((s) => s.setAVFXMode);
+  const persistError = useStoryStore((s) => s.persistError);
+  const clearPersistError = useStoryStore((s) => s.clearPersistError);
 
   useEffect(() => {
     loadStory(id);
   }, [id, loadStory]);
+
+  useEffect(() => {
+    if (!persistError) return;
+    const show = setTimeout(() => setSaveStatus(`⚠ ${persistError}`), 0);
+    const hide = setTimeout(() => { setSaveStatus(''); clearPersistError(); }, 4000);
+    return () => { clearTimeout(show); clearTimeout(hide); };
+  }, [persistError, clearPersistError]);
 
   // ── Flash helper ──────────────────────────────────────────────────────────
 
@@ -161,7 +170,7 @@ export default function StoryEditorPage() {
 
           {/* Save status flash */}
           {saveStatus && (
-            <span className="text-xs font-medium text-emerald-500">{saveStatus}</span>
+            <span className={`text-xs font-medium ${saveStatus.startsWith('⚠') ? 'text-red-500' : 'text-emerald-500'}`}>{saveStatus}</span>
           )}
 
           {/* Finalise for Release — split button */}

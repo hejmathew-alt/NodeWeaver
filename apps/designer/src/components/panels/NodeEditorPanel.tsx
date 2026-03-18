@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { DEBOUNCE_SPANS } from '@/lib/constants';
 import type { NWVNode, NWVBlock, NWVChoice, NWVStory, NodeType, NWVCharacter, NWVSFXCue, NWVEnemy } from '@nodeweaver/engine';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -159,9 +160,9 @@ function BlockTextEditor({
     const words = currentText.trim().split(/\s+/);
     return words.map((word, i) => {
       const linked = cues.find((c) => c.wordIndex === i);
-      const style = linked?.color
-        ? `border-bottom:2px solid ${linked.color};font-weight:600`
-        : '';
+      // Validate hex colour before inserting into style attribute to prevent CSS injection
+      const safeColor = linked?.color && /^#[0-9a-fA-F]{6}$/.test(linked.color) ? linked.color : null;
+      const style = safeColor ? `border-bottom:2px solid ${safeColor};font-weight:600` : '';
       return `<span data-wi="${i}" style="${style}">${escapeHtml(word)}</span>`;
     }).join(' ');
   }).current;
@@ -294,7 +295,7 @@ function BlockTextEditor({
           // Re-apply spans after typing pause
           if (hasCues || hasSfxPanel) {
             if (debounceRef.current) clearTimeout(debounceRef.current);
-            debounceRef.current = setTimeout(applySpans, 400);
+            debounceRef.current = setTimeout(applySpans, DEBOUNCE_SPANS);
           }
         }}
         onBlur={() => {

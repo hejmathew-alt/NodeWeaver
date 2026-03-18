@@ -109,7 +109,9 @@ export class TTSPlayer {
           resolve();
         };
       });
-    } catch {}
+    } catch (err) {
+      console.error('[TTSPlayer] scheduleBuffer failed (audio decode or context error):', err);
+    }
   }
 
   private waitForEnd(): Promise<void> {
