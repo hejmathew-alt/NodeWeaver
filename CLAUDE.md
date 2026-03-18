@@ -181,6 +181,50 @@ Context builder (`lib/context-builder.ts`) does BFS from roots to build: ancestr
 
 ---
 
+## Git Practices
+
+### Branch Strategy
+- `main` — stable, releasable only. Never commit directly.
+- `develop` — active integration branch. Day-to-day target.
+- `feature/<name>` — one branch per meaningful unit of work.
+
+Always branch from `develop`, merge back to `develop`.
+
+### Workflow
+```bash
+git checkout develop
+git checkout -b feature/<descriptive-name>
+# develop and test...
+git add -p                          # stage by hunk, not whole files
+git commit -m "type: description"
+git checkout develop
+git merge feature/<name> --no-ff
+git branch -d feature/<name>
+```
+
+### Commit Messages (Conventional Commits)
+Format: `type: short description`
+
+| Type | Use for |
+|------|---------|
+| `feat` | New feature or capability |
+| `fix` | Bug fix |
+| `refactor` | Code restructure, no behaviour change |
+| `chore` | Tooling, deps, config |
+| `docs` | Documentation only |
+| `wip` | Checkpoint commit mid-feature (squash before merge) |
+
+### Rules
+- Commit early and often within a feature branch — small, focused commits
+- Never commit generated assets (WAV files, build output, `.next/`)
+- Never commit `servers/venv/` or `servers/comfyui/` — both are gitignored
+- Use `git add -p` to review what you're staging — avoid accidental commits
+- Tag stable milestones: `git tag -a v0.x.0 -m "description"`
+- Push to remote regularly as off-site backup, even if working solo
+- Always verify no large binaries are staged before pushing to GitHub (100 MB limit)
+
+---
+
 ## Progress Log
 
 *Updated as work proceeds. Most recent first.*
