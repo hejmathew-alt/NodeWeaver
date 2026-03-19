@@ -88,16 +88,17 @@ function layoutNodes(nodes: NWVNode[]): NWVNode[] {
   const NODE_W = 340;
   const NODE_H = 230;
 
+  // L→R layout: x encodes depth (spine), y encodes sibling spread (branching)
   return nodes.map((n) => {
     const level = levels.get(n.id) ?? 0;
     const siblings = byLevel.get(level) ?? [n.id];
     const idx = siblings.indexOf(n.id);
-    const totalW = siblings.length * NODE_W;
+    const totalH = siblings.length * NODE_H;
     return {
       ...n,
       position: {
-        x: idx * NODE_W - totalW / 2 + NODE_W / 2 + 600,
-        y: level * NODE_H + 80,
+        x: level * NODE_W + 80,
+        y: idx * NODE_H - totalH / 2 + NODE_H / 2 + 400,
       },
     };
   });
@@ -130,7 +131,13 @@ function hydrateStory(
       updatedAt: now,
     },
     nodes: layoutNodes(rawNodes),
-    characters: [NARRATOR_DEFAULT, ...((raw.characters as NWVStory['characters']) ?? [])],
+    characters: [
+      NARRATOR_DEFAULT,
+      ...((raw.characters as NWVStory['characters']) ?? []).map((c) => ({
+        ...c,
+        voiceLocked: true,
+      })),
+    ],
     lanes: [],
     enemies: {},
   };

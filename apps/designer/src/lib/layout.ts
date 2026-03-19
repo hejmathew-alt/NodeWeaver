@@ -1,26 +1,26 @@
 /**
  * Graph layout helpers for the story canvas.
  *
- * autoLayout  — Dagre top-to-bottom hierarchical layout.
+ * autoLayout  — Dagre left-to-right hierarchical layout.
  * pushOverlaps — Collision resolution after a node drag.
  */
 
 import dagre from '@dagrejs/dagre';
 import type { Node, Edge } from '@xyflow/react';
 
-const GAP_X = 40; // horizontal gap between nodes
-const GAP_Y = 60; // vertical gap between nodes
+const GAP_X = 80; // horizontal gap between ranks (left-to-right spacing)
+const GAP_Y = 40; // vertical gap between sibling nodes in the same rank
 
 // ── Auto-layout (Dagre) ───────────────────────────────────────────────────────
 
 export function autoLayout(nodes: Node[], edges: Edge[]): Node[] {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'TB', nodesep: GAP_X, ranksep: GAP_Y });
+  g.setGraph({ rankdir: 'LR', nodesep: GAP_Y, ranksep: GAP_X });
 
   for (const node of nodes) {
-    const w = (node.style?.width as number | undefined) ?? 220;
-    const h = (node.style?.height as number | undefined) ?? 120;
+    const w = (node.style?.width as number | undefined) ?? 240;
+    const h = (node.style?.height as number | undefined) ?? 106;
     g.setNode(node.id, { width: w, height: h });
   }
 
@@ -30,15 +30,32 @@ export function autoLayout(nodes: Node[], edges: Edge[]): Node[] {
 
   dagre.layout(g);
 
+  // Snap spine nodes to a shared center Y so the main path forms a horizontal line.
+  const spineNodeIds = new Set(
+    nodes
+      .filter((n) => (n.data as Record<string, unknown>)?._isSpineNode === true)
+      .map((n) => n.id),
+  );
+
+  let centerY = 0;
+  if (spineNodeIds.size > 0) {
+    const spineYs = [...spineNodeIds]
+      .map((id) => g.node(id)?.y ?? 0)
+      .sort((a, b) => a - b);
+    // Use median to resist outliers
+    centerY = spineYs[Math.floor(spineYs.length / 2)];
+  }
+
   return nodes.map((node) => {
     const pos = g.node(node.id);
-    const w = (node.style?.width as number | undefined) ?? 220;
-    const h = (node.style?.height as number | undefined) ?? 120;
+    const w = (node.style?.width as number | undefined) ?? 240;
+    const h = (node.style?.height as number | undefined) ?? 106;
+    const isSpine = spineNodeIds.size > 0 && spineNodeIds.has(node.id);
     return {
       ...node,
       position: {
         x: pos.x - w / 2,
-        y: pos.y - h / 2,
+        y: (isSpine ? centerY : pos.y) - h / 2,
       },
     };
   });
@@ -55,8 +72,8 @@ function toRect(node: Node): Rect {
     id: node.id,
     x: node.position.x,
     y: node.position.y,
-    w: (node.style?.width  as number | undefined) ?? 220,
-    h: (node.style?.height as number | undefined) ?? 120,
+    w: (node.style?.width  as number | undefined) ?? 240,
+    h: (node.style?.height as number | undefined) ?? 106,
   };
 }
 

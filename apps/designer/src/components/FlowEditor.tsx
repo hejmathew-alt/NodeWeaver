@@ -81,14 +81,6 @@ const STATIC_COMMANDS: SlashCommand[] = [
     cursorBack: 1,
   },
   {
-    id: 'chat',
-    label: 'Chat node',
-    description: '[type: chat]',
-    color: '#22c55e',
-    icon: 'C',
-    insert: '[type: chat]',
-  },
-  {
     id: 'twist',
     label: 'Twist node',
     description: '[type: twist]',
