@@ -16,7 +16,7 @@ import * as path from 'path';
 
 const QWEN_PORT   = 7862;
 const QWEN_URL    = `http://127.0.0.1:${QWEN_PORT}`;
-const QWEN_PYTHON = path.join(os.homedir(), 'Documents/NodeWeaver/servers/venv/bin/python');
+const QWEN_PYTHON = path.join(os.homedir(), 'Documents/NodeWeaver/servers/qwen_venv/bin/python');
 const QWEN_SCRIPT = path.join(os.homedir(), 'Documents/NodeWeaver/servers/qwen_server.py');
 
 // ── Singleton state ──────────────────────────────────────────────────────────

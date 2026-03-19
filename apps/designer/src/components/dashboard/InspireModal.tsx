@@ -103,8 +103,9 @@ function layoutNodes(nodes: NWVNode[]): NWVNode[] {
     const level = levels.get(n.id) ?? 0;
     const siblings = byLevel.get(level) ?? [n.id];
     const idx = siblings.indexOf(n.id);
-    const totalW = siblings.length * NODE_W;
-    return { ...n, position: { x: idx * NODE_W - totalW / 2 + NODE_W / 2 + 600, y: level * NODE_H + 80 } };
+    const totalH = siblings.length * NODE_H;
+    // L→R layout: x encodes depth (spine), y encodes sibling spread (branching)
+    return { ...n, position: { x: level * NODE_W + 80, y: idx * NODE_H - totalH / 2 + NODE_H / 2 + 400 } };
   });
 }
 
@@ -164,7 +165,7 @@ function buildSkeletonStory(concept: Concept, genre: GenreSlug): NWVStory {
       status: 'draft',
       audio: [],
       lanes: [],
-      position: { x: 600, y: 80 },
+      position: { x: 80, y: 400 },
     },
     {
       id: n2Id,
@@ -177,7 +178,7 @@ function buildSkeletonStory(concept: Concept, genre: GenreSlug): NWVStory {
       status: 'draft',
       audio: [],
       lanes: [],
-      position: { x: 260, y: 320 },
+      position: { x: 420, y: 285 },
     },
     {
       id: n3Id,
@@ -190,7 +191,7 @@ function buildSkeletonStory(concept: Concept, genre: GenreSlug): NWVStory {
       status: 'draft',
       audio: [],
       lanes: [],
-      position: { x: 940, y: 320 },
+      position: { x: 420, y: 515 },
     },
   ];
 

@@ -16,6 +16,7 @@ import type {
   NWVLoreEntry,
   NWVVFXKeyframe,
   NWVLane,
+  ActColumn,
   NodeType,
 } from '@nodeweaver/engine';
 import { db } from '@/lib/db';
@@ -158,12 +159,12 @@ interface StoryStore {
   updateLoreEntry: (id: string, patch: Partial<NWVLoreEntry>) => void;
   deleteLoreEntry: (id: string) => void;
 
-  // Lanes
-  addLane: () => string;
-  updateLane: (id: string, patch: Partial<NWVLane>) => void;
-  deleteLane: (id: string) => void;
-  assignNodeToLane: (nodeId: string, laneId: string) => void;
-  removeNodeFromLane: (nodeId: string, laneId: string) => void;
+  // Acts
+  addAct: (label?: string) => string;
+  updateAct: (id: string, patch: Partial<ActColumn>) => void;
+  deleteAct: (id: string) => void;
+  reorderActs: (fromIndex: number, toIndex: number) => void;
+  setNodeAct: (nodeId: string, actId: string | undefined) => void;
 
   // AV FX mode
   setAVFXMode: (active: boolean) => void;
@@ -410,6 +411,7 @@ export const useStoryStore = create<StoryStore>((set, get) => {
     if (!activeStory) return;
     const target = activeStory.nodes.find((n) => n.id === nodeId);
     if (target?.locked) return;
+    if (target?.isRoot && !window.confirm('This is a Seed AI anchor node. Deleting it may break the planted story structure. Delete anyway?')) return;
     const updated = stamp({
       ...activeStory,
       nodes: activeStory.nodes
@@ -1152,62 +1154,70 @@ export const useStoryStore = create<StoryStore>((set, get) => {
     set({ activeStory: updated }); persist(updated);
   },
 
-  // ── Lane actions ─────────────────────────────────────────────────────────
+  // ── Act actions ──────────────────────────────────────────────────────────
 
-  addLane: () => {
+  addAct: (label) => {
     const { activeStory } = get();
     if (!activeStory) return '';
-    const PALETTE = ['#f43f5e', '#f59e0b', '#10b981', '#0ea5e9', '#8b5cf6', '#64748b', '#f97316', '#14b8a6'];
-    const colour = PALETTE[(activeStory.lanes ?? []).length % PALETTE.length];
-    const lane: NWVLane = { id: nanoid(), name: 'New Lane', colour, description: '' };
-    const updated = stamp({ ...activeStory, lanes: [...(activeStory.lanes ?? []), lane] });
+    const acts = [...(activeStory.acts ?? [])].sort((a, b) => a.order - b.order);
+    const lastAct = acts.at(-1);
+    const worldX = lastAct ? lastAct.worldX + lastAct.worldWidth : 0;
+    const order = acts.length;
+    const defaultLabel = label ?? `ACT ${order + 1}`;
+    const act: ActColumn = { id: nanoid(), label: defaultLabel, order, worldX, worldWidth: 600 };
+    const updated = stamp({ ...activeStory, acts: [...(activeStory.acts ?? []), act] });
     set({ activeStory: updated }); persist(updated);
-    return lane.id;
+    return act.id;
   },
 
-  updateLane: (id, patch) => {
+  updateAct: (id, patch) => {
     const { activeStory } = get();
     if (!activeStory) return;
     const updated = stamp({
       ...activeStory,
-      lanes: (activeStory.lanes ?? []).map((l) => l.id === id ? { ...l, ...patch } : l),
+      acts: (activeStory.acts ?? []).map((a) => a.id === id ? { ...a, ...patch } : a),
     });
     set({ activeStory: updated }); persist(updated);
   },
 
-  deleteLane: (id) => {
+  deleteAct: (id) => {
     const { activeStory } = get();
     if (!activeStory) return;
+    const remaining = (activeStory.acts ?? [])
+      .filter((a) => a.id !== id)
+      .sort((a, b) => a.order - b.order)
+      .map((a, i) => ({ ...a, order: i }));
     const updated = stamp({
       ...activeStory,
-      lanes: (activeStory.lanes ?? []).filter((l) => l.id !== id),
-      nodes: activeStory.nodes.map((n) => ({ ...n, lanes: (n.lanes ?? []).filter((lid) => lid !== id) })),
+      acts: remaining,
+      nodes: activeStory.nodes.map((n) => n.actId === id ? { ...n, actId: undefined } : n),
     });
     set({ activeStory: updated }); persist(updated);
   },
 
-  assignNodeToLane: (nodeId, laneId) => {
+  reorderActs: (fromIndex, toIndex) => {
     const { activeStory } = get();
     if (!activeStory) return;
-    const updated = stamp({
-      ...activeStory,
-      nodes: activeStory.nodes.map((n) =>
-        n.id === nodeId && !(n.lanes ?? []).includes(laneId)
-          ? { ...n, lanes: [...(n.lanes ?? []), laneId] }
-          : n
-      ),
+    const sorted = [...(activeStory.acts ?? [])].sort((a, b) => a.order - b.order);
+    const [moved] = sorted.splice(fromIndex, 1);
+    sorted.splice(toIndex, 0, moved);
+    // Recalculate worldX and order for all acts
+    let cursor = 0;
+    const reordered = sorted.map((a, i) => {
+      const next = { ...a, order: i, worldX: cursor };
+      cursor += a.worldWidth;
+      return next;
     });
+    const updated = stamp({ ...activeStory, acts: reordered });
     set({ activeStory: updated }); persist(updated);
   },
 
-  removeNodeFromLane: (nodeId, laneId) => {
+  setNodeAct: (nodeId, actId) => {
     const { activeStory } = get();
     if (!activeStory) return;
     const updated = stamp({
       ...activeStory,
-      nodes: activeStory.nodes.map((n) =>
-        n.id === nodeId ? { ...n, lanes: (n.lanes ?? []).filter((lid) => lid !== laneId) } : n
-      ),
+      nodes: activeStory.nodes.map((n) => n.id === nodeId ? { ...n, actId } : n),
     });
     set({ activeStory: updated }); persist(updated);
   },

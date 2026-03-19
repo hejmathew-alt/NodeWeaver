@@ -22,6 +22,11 @@ export const AI_MAX_TOKENS: Record<string, number> = {
   'loom-analyse':      1200,
   'loom-chat':         400,
   'lighting-suggest':  600,
+  'node-description':  200,
+  'seed-spark':        150,
+  'seed-premise':      1200,
+  'seed-worldcast':    1500,
+  'seed-architecture': 2000,
 };
 
 /** Fallback token limit for any mode not listed above (e.g. 'body') */

@@ -34,11 +34,12 @@ import { CanvasToolbar } from './CanvasToolbar';
 import { ChoiceEdge } from './edges/ChoiceEdge';
 import { FlowEditor } from '@/components/FlowEditor';
 import { autoLayout, pushOverlaps } from '@/lib/layout';
+import { computeSpine } from '@/lib/spine';
 import { NodeEditorPanel } from '@/components/panels/NodeEditorPanel';
 import { SettingsPanel } from '@/components/panels/SettingsPanel';
 import { WorldPanel } from '@/components/panels/WorldPanel';
-import { LanePanel } from '@/components/panels/LanePanel';
-import { LaneOverlay } from '@/components/canvas/LaneOverlay';
+import { ActBands } from '@/components/canvas/ActBands';
+import { ActHeader } from '@/components/canvas/ActHeader';
 import {
   DndContext,
   DragOverlay,
@@ -54,6 +55,7 @@ import type { NWVBlock } from '@nodeweaver/engine';
 import { DragPreview } from './nodes/CanvasBlock';
 import { useStoryStore } from '@/store/story';
 import { useVoiceStore } from '@/store/voice';
+import { SeedAIModal } from '@/components/dashboard/SeedAIModal';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -80,29 +82,46 @@ const edgeTypes = {
 interface StoryCanvasProps {
   story: NWVStory;
   onToggleAVFX?: () => void;
+  onSeedAI?: () => void;
 }
 
 function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
+  const spineSet = computeSpine(story.nodes);
+
+  // Find nodes that have no incoming edges (orphaned — never connected as a target)
+  const hasIncoming = new Set<string>();
+  for (const n of story.nodes) {
+    for (const c of n.choices) {
+      if (c.next) hasIncoming.add(c.next);
+    }
+  }
+
   const nodes: Node[] = story.nodes.map((n) => ({
     id: n.id,
     type: n.type,
     position: n.position,
-    style: { width: n.width ?? 220, height: n.height ?? 120 },
-    data: n as unknown as Record<string, unknown>,
+    style: { width: n.width ?? 240, height: n.height ?? 106 },
+    data: {
+      ...n,
+      _isSpineNode: spineSet.has(n.id),
+      _isOrphaned: n.type !== 'start' && !hasIncoming.has(n.id),
+    } as unknown as Record<string, unknown>,
   }));
 
   const edges: Edge[] = [];
   for (const node of story.nodes) {
     for (const choice of node.choices) {
-      if (choice.next) {
+      if (choice.next && node.type !== 'end' && story.nodes.some((n) => n.id === choice.next)) {
+        const isSpineEdge = spineSet.has(node.id) && spineSet.has(choice.next);
         edges.push({
           id: `${node.id}-${choice.id}`,
           type: 'choice',
           source: node.id,
           target: choice.next,
-          sourceHandle: choice.sourceHandle ?? undefined,
-          targetHandle: choice.targetHandle ?? undefined,
-          data: { sourceId: node.id, choiceId: choice.id, label: choice.label },
+          // Migrate handle IDs: bottom/left/null→right, top/target-right/null→target-left
+          sourceHandle: (!choice.sourceHandle || choice.sourceHandle === 'bottom' || choice.sourceHandle === 'left') ? 'right' : choice.sourceHandle,
+          targetHandle: (!choice.targetHandle || choice.targetHandle === 'top' || choice.targetHandle === 'target-right') ? 'target-left' : choice.targetHandle,
+          data: { sourceId: node.id, choiceId: choice.id, label: choice.label, _isSpineEdge: isSpineEdge },
         });
       }
     }
@@ -115,7 +134,6 @@ function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
 
 const NODE_PICKER_ITEMS: { type: NodeType; label: string; color: string }[] = [
   { type: 'story',  label: 'Story',       color: '#3b82f6' },
-  { type: 'chat',   label: 'Chat',        color: '#22c55e' },
   { type: 'combat', label: 'Interactive', color: '#ef4444' },
   { type: 'twist',  label: 'Twist',       color: '#a855f7' },
   { type: 'start',  label: 'Start',       color: '#14b8a6' },
@@ -307,16 +325,13 @@ interface InnerProps {
   onResizeStart: (e: React.MouseEvent) => void;
   flowMode: boolean;
   onFlowMode: () => void;
-  panelHidden: boolean;
-  onTogglePanelHidden: () => void;
   worldPanelOpen: boolean;
   onToggleWorld: () => void;
-  lanesPanelOpen: boolean;
-  onToggleLanes: () => void;
   onToggleAVFX?: () => void;
+  onSeedAI?: () => void;
 }
 
-function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onResizeStart, flowMode, onFlowMode, panelHidden, onTogglePanelHidden, worldPanelOpen, onToggleWorld, lanesPanelOpen, onToggleLanes, onToggleAVFX }: InnerProps) {
+function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onResizeStart, flowMode, onFlowMode, worldPanelOpen, onToggleWorld, onToggleAVFX, onSeedAI }: InnerProps) {
   const selectedNodeId = useStoryStore((s) => s.selectedNodeId);
   const selectedPanel = useStoryStore((s) => s.selectedPanel);
   const setSelectedNode = useStoryStore((s) => s.setSelectedNode);
@@ -355,6 +370,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
   const [nodes, setNodes] = useNodesState(initialNodes);
   const [edges, setEdges] = useEdgesState(initialEdges);
   const [pendingConn, setPendingConn] = useState<PendingConn | null>(null);
+  const pendingConnSetAtRef = useRef<number>(0);
   const [pendingEdge, setPendingEdge] = useState<PendingEdge | null>(null);
   const [canvasLocked, setCanvasLocked] = useState(false);
 
@@ -366,10 +382,18 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.nodes]);
 
-  // Auto-layout when Flow Mode created new nodes (mount-only)
+  // Auto-layout on first open of each story per session (gets spine centering + LR layout)
+  // Also handles Flow Mode nodes
   useEffect(() => {
-    if (sessionStorage.getItem('nw:flowmode:runlayout') === '1') {
-      sessionStorage.removeItem('nw:flowmode:runlayout');
+    const flowModeKey = 'nw:flowmode:runlayout';
+    const storyKey = `nw:layout:${story.id}`;
+    const needsLayout =
+      sessionStorage.getItem(flowModeKey) === '1' ||
+      sessionStorage.getItem(storyKey) !== '1';
+
+    if (needsLayout) {
+      sessionStorage.removeItem(flowModeKey);
+      sessionStorage.setItem(storyKey, '1');
       const t = setTimeout(() => handleAutoLayout(), 150);
       return () => clearTimeout(t);
     }
@@ -433,6 +457,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
       if (connectionState.isValid || !connectionState.fromNode) return;
       const e = event instanceof MouseEvent ? event : (event as TouchEvent).changedTouches[0];
       const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      pendingConnSetAtRef.current = Date.now();
       setPendingConn({
         sourceId: connectionState.fromNode.id,
         sourceHandle: connectionState.fromHandle?.id ?? undefined,
@@ -539,9 +564,12 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
 
   const onPaneClick = useCallback(() => {
     setSelectedNode(null);
-    // Don't clear pendingConn here — onConnectEnd sets it on handle-drag-to-canvas,
-    // and the click event fires immediately after. NodePickerMenu closes itself.
-  }, [setSelectedNode]);
+    // Clear the node picker if it has been open for more than 200ms
+    // (the immediate paneClick after onConnectEnd is ignored by the time check)
+    if (pendingConn && Date.now() - pendingConnSetAtRef.current > 200) {
+      setPendingConn(null);
+    }
+  }, [setSelectedNode, pendingConn]);
 
   // ── Block drag & drop ────────────────────────────────────────────────────────
 
@@ -624,7 +652,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
 
   return (
     <div className="flex h-full w-full flex-col">
-      <CanvasToolbar flowMode={flowMode} onFlowMode={onFlowMode} worldPanelOpen={worldPanelOpen} onToggleWorld={onToggleWorld} lanesPanelOpen={lanesPanelOpen} onToggleLanes={onToggleLanes} avfxMode={avfxMode} onToggleAVFX={onToggleAVFX} />
+      <CanvasToolbar flowMode={flowMode} onFlowMode={onFlowMode} worldPanelOpen={worldPanelOpen} onToggleWorld={onToggleWorld} avfxMode={avfxMode} onToggleAVFX={onToggleAVFX} onSeedAI={onSeedAI} />
       <DndContext
         sensors={dndSensors}
         collisionDetection={pointerWithin}
@@ -644,21 +672,10 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
         {worldPanelOpen && (
           <WorldPanel onClose={onToggleWorld} />
         )}
-        {/* Lanes panel — left side (mutually exclusive with World) */}
-        {lanesPanelOpen && (
-          <LanePanel onClose={onToggleLanes} />
-        )}
 
-        {/* Panel collapse/expand tab — always visible on the right edge */}
-        <button
-          onClick={onTogglePanelHidden}
-          className="absolute top-1/3 bottom-1/3 right-0 z-30 flex w-4 items-center justify-center rounded-l bg-slate-200 text-slate-400 transition-colors hover:bg-slate-300 hover:text-slate-700"
-          title={panelHidden ? 'Show panel' : 'Hide panel for immersion'}
-        >
-          <svg width="5" height="10" viewBox="0 0 6 12" fill="currentColor">
-            <path d={panelHidden ? 'M0 0 L6 6 L0 12' : 'M6 0 L0 6 L6 12'} />
-          </svg>
-        </button>
+        {/* Act column header — pinned to top, above canvas */}
+        <ActHeader story={story} />
+
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -681,7 +698,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
           fitViewOptions={{ padding: 0.2 }}
           proOptions={{ hideAttribution: true }}
         >
-          <LaneOverlay story={story} />
+          <ActBands story={story} />
           <Background
             variant={BackgroundVariant.Dots}
             bgColor="#f8fafc"
@@ -690,7 +707,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
             size={1.5}
           />
           <Controls showInteractive={false} className="!border-slate-200 !bg-white !text-slate-600">
-            <ControlButton onClick={handleAutoLayout} title="Auto-arrange all nodes into a clean top-to-bottom tree">
+            <ControlButton onClick={handleAutoLayout} title="Auto-arrange all nodes into a clean left-to-right tree">
               ⬡
             </ControlButton>
             <ControlButton
@@ -745,7 +762,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
           />
         )}
 
-        {!panelHidden && selectedNodeId && (
+        {selectedNodeId && (
           <NodeEditorPanel
             panelWidth={panelWidth}
             isExpanded={panelExpanded}
@@ -753,7 +770,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
             onResizeStart={onResizeStart}
           />
         )}
-        {!panelHidden && !selectedNodeId && selectedPanel === 'settings' && (
+        {!selectedNodeId && selectedPanel === 'settings' && (
           <SettingsPanel
             panelWidth={panelWidth}
             isExpanded={panelExpanded}
@@ -774,13 +791,12 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
 
 // ── Main export (wraps in ReactFlowProvider so inner can use useReactFlow) ────
 
-export function StoryCanvas({ story, onToggleAVFX }: StoryCanvasProps) {
+export function StoryCanvas({ story, onToggleAVFX, onSeedAI }: StoryCanvasProps) {
   const [panelWidth, setPanelWidth]       = useState(PANEL_MAX);
   const [panelExpanded, setPanelExpanded] = useState(false);
-  const [panelHidden, setPanelHidden]     = useState(false);
   const [flowMode, setFlowMode]           = useState(false);
   const [worldPanelOpen, setWorldPanelOpen] = useState(false);
-  const [lanesPanelOpen, setLanesPanelOpen] = useState(false);
+  const [showSeedAI, setShowSeedAI] = useState(false);
 
   // Reset to max width whenever the node editor panel opens (closed → open)
   // but not when simply switching from one node to another.
@@ -788,7 +804,10 @@ export function StoryCanvas({ story, onToggleAVFX }: StoryCanvasProps) {
   const prevNodeIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (selectedNodeId && !prevNodeIdRef.current) {
+      // Intentional: reset panel width once on closed→open transition (not on node switch)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPanelWidth(PANEL_MAX);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPanelExpanded(false);
     }
     prevNodeIdRef.current = selectedNodeId;
@@ -825,23 +844,25 @@ export function StoryCanvas({ story, onToggleAVFX }: StoryCanvasProps) {
   }
 
   return (
-    <ReactFlowProvider>
-      <StoryFlowInner
-        story={story}
-        panelWidth={panelWidth}
-        panelExpanded={panelExpanded}
-        onToggleExpand={toggleExpand}
-        onResizeStart={startResize}
-        flowMode={flowMode}
-        onFlowMode={() => setFlowMode(true)}
-        panelHidden={panelHidden}
-        onTogglePanelHidden={() => setPanelHidden((h) => !h)}
-        worldPanelOpen={worldPanelOpen}
-        onToggleWorld={() => { setWorldPanelOpen((v) => !v); setLanesPanelOpen(false); }}
-        lanesPanelOpen={lanesPanelOpen}
-        onToggleLanes={() => { setLanesPanelOpen((v) => !v); setWorldPanelOpen(false); }}
-        onToggleAVFX={onToggleAVFX}
-      />
-    </ReactFlowProvider>
+    <>
+      <ReactFlowProvider>
+        <StoryFlowInner
+          story={story}
+          panelWidth={panelWidth}
+          panelExpanded={panelExpanded}
+          onToggleExpand={toggleExpand}
+          onResizeStart={startResize}
+          flowMode={flowMode}
+          onFlowMode={() => setFlowMode(true)}
+          worldPanelOpen={worldPanelOpen}
+          onToggleWorld={() => setWorldPanelOpen((v) => !v)}
+          onToggleAVFX={onToggleAVFX}
+          onSeedAI={onSeedAI ?? (() => setShowSeedAI(true))}
+        />
+      </ReactFlowProvider>
+      {showSeedAI && (
+        <SeedAIModal onClose={() => setShowSeedAI(false)} />
+      )}
+    </>
   );
 }
