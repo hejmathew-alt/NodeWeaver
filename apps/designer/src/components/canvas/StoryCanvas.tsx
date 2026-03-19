@@ -804,7 +804,10 @@ export function StoryCanvas({ story, onToggleAVFX, onSeedAI }: StoryCanvasProps)
   const prevNodeIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (selectedNodeId && !prevNodeIdRef.current) {
+      // Intentional: reset panel width once on closed→open transition (not on node switch)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPanelWidth(PANEL_MAX);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPanelExpanded(false);
     }
     prevNodeIdRef.current = selectedNodeId;

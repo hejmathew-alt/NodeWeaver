@@ -124,7 +124,7 @@ export function SettingsPanel({ panelWidth, isExpanded, onToggleExpand, onResize
   }, []);
 
   return (
-    <aside className="relative flex shrink-0 flex-col border-l border-slate-200 bg-white" style={{ width: panelWidth }}>
+    <aside className="relative z-20 flex shrink-0 flex-col border-l border-slate-200 bg-white" style={{ width: panelWidth }}>
       {/* Resize handle — left edge */}
       <div
         className="absolute left-0 top-0 h-full w-1 cursor-col-resize transition-colors hover:bg-violet-300"
@@ -388,7 +388,7 @@ export function SettingsPanel({ panelWidth, isExpanded, onToggleExpand, onResize
           />
 
           <p className="text-[11px] leading-relaxed text-slate-400">
-            Keys are stored in your browser's local storage. If a key is set in{' '}
+            Keys are stored in your browser&apos;s local storage. If a key is set in{' '}
             <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">.env.local</code>,
             it will be used server-side as a fallback.
           </p>

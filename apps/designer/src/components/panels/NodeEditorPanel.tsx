@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { DEBOUNCE_SPANS } from '@/lib/constants';
 import type { NWVNode, NWVBlock, NWVChoice, NWVStory, NodeType, NWVCharacter, NWVSFXCue, NWVEnemy } from '@nodeweaver/engine';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -13,6 +13,7 @@ import { charSeed } from '@/lib/char-seed';
 import { mapQwenToEL } from '@/lib/el-delivery-map';
 import { EL_AUDIO_CACHE, makeElCacheKey } from '@/lib/el-audio-cache';
 import { buildAIContext, aiContextToFlat } from '@/lib/context-builder';
+import { computeSpine } from '@/lib/spine';
 import { LoomPanel } from './LoomPanel';
 import { SFXPlayer } from '@/lib/sfx-player';
 import { readAudioFileServer } from '@/lib/audio-storage';
@@ -30,7 +31,6 @@ const NODE_TYPE_COLOURS: Record<NodeType, string> = {
 
 const NODE_TYPE_ITEMS: { type: NodeType; label: string }[] = [
   { type: 'story',  label: 'Story' },
-  { type: 'chat',   label: 'Chat' },
   { type: 'combat', label: 'Interactive' },
   { type: 'twist',  label: 'Twist' },
   { type: 'start',  label: 'Start' },
@@ -100,6 +100,7 @@ function BlockTextEditor({
   const interimSpanRef = useRef<HTMLSpanElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cuesRef = useRef(sfxCues);
+  // eslint-disable-next-line react-hooks/refs -- intentional render-time ref update to keep cuesRef fresh for closures
   cuesRef.current = sfxCues;
   const hasCues = sfxCues.length > 0;
 
@@ -155,7 +156,7 @@ function BlockTextEditor({
   }, [voiceModeActive, blockId, onTextChange]);
 
   // Build word-span HTML for SFX visual links
-  const buildSpanHtml = useRef((currentText: string, cues: NWVSFXCue[]) => {
+  const buildSpanHtml = useCallback((currentText: string, cues: NWVSFXCue[]) => {
     if (!currentText.trim()) return '';
     const words = currentText.trim().split(/\s+/);
     return words.map((word, i) => {
@@ -165,10 +166,10 @@ function BlockTextEditor({
       const style = safeColor ? `border-bottom:2px solid ${safeColor};font-weight:600` : '';
       return `<span data-wi="${i}" style="${style}">${escapeHtml(word)}</span>`;
     }).join(' ');
-  }).current;
+  }, []);
 
   // Apply word spans (debounced) — only when SFX cues exist or panel open
-  const applySpans = useRef(() => {
+  const applySpans = useCallback(() => {
     const div = editRef.current;
     if (!div) return;
     const currentText = div.textContent ?? '';
@@ -205,7 +206,7 @@ function BlockTextEditor({
         }
       } catch { /* caret restore best-effort */ }
     }
-  }).current;
+  }, [buildSpanHtml]);
 
   // Sync text & spans from external changes (AI write, undo, cue add/delete)
   const prevCuesRef = useRef(sfxCues);
@@ -879,6 +880,13 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
   const [contentCollapsed, setContentCollapsed] = useState(false);
   const [choicesCollapsed, setChoicesCollapsed] = useState(false);
 
+  // Description field state
+  const [localDesc, setLocalDesc] = useState('');
+  const [descStreaming, setDescStreaming] = useState<string | null>(null);
+  const [descAiLoading, setDescAiLoading] = useState(false);
+  const [descAiError, setDescAiError] = useState<string | null>(null);
+  const descDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Block SFX playback (for Read button and per-block play)
   const sfxPlayerRef = useRef<SFXPlayer | null>(null);
 
@@ -931,8 +939,26 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
         audioCtxRef.current.close();
         audioCtxRef.current = null;
       }
+      if (descDebounceRef.current) clearTimeout(descDebounceRef.current);
     };
   }, [selectedNodeId]);
+
+  // Sync description local state when the selected node changes
+  useEffect(() => {
+    const n = activeStory?.nodes.find((nd) => nd.id === selectedNodeId);
+    setLocalDesc(n?.description ?? '');
+    setDescStreaming(null);
+    setDescAiError(null);
+    if (descDebounceRef.current) clearTimeout(descDebounceRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodeId]);
+
+  // Memoized spine computation — traverses full node graph
+  const spineSet = useMemo(
+    () => (activeStory ? computeSpine(activeStory.nodes) : new Set<string>()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeStory?.nodes]
+  );
 
   if (!activeStory || !selectedNodeId) return null;
 
@@ -942,6 +968,7 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
   const colour = NODE_TYPE_COLOURS[node.type];
   const up = (patch: Partial<NWVNode>) => updateNode(selectedNodeId, patch);
   const blocks = node.blocks ?? [];
+  const autoOnSpine = spineSet.has(selectedNodeId);
 
   // ── Voice reading (Web Audio streaming — matches game's approach) ────────────
 
@@ -994,6 +1021,68 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
     scheduledEndRef.current = 0;
     setReading(false);
     setReadingBlockId(null);
+  }
+
+  // ── AI description generation ────────────────────────────────────────────────
+
+  async function handleAiDescription() {
+    setDescAiLoading(true);
+    setDescAiError(null);
+    const blocksCtx = blocks.map((b) => {
+      const char = (activeStory.characters ?? []).find((c) => c.id === (b.characterId || 'narrator'));
+      return { type: b.type, text: b.text, characterName: char?.name };
+    });
+    const flatCtx = aiContextToFlat(buildAIContext(activeStory, selectedNodeId), activeStory, selectedNodeId);
+    const res = await fetch('/api/ai/generate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'node-description',
+        prompt: node.description?.trim() ?? '',
+        anthropicKey,
+        context: {
+          ...flatCtx,
+          nodeType: node.type,
+          nodeTitle: node.title,
+          nodeLocation: node.location,
+          blocks: blocksCtx,
+        },
+      }),
+    }).catch(() => null);
+    if (!res?.ok || !res.body) {
+      const errRaw = res ? await res.text().catch(() => null) : null;
+      let errMsg = 'AI generation failed.';
+      try {
+        if (errRaw) {
+          const p = JSON.parse(errRaw);
+          if (p.error) errMsg = typeof p.error === 'string' ? p.error : (p.error.message ?? errMsg);
+        }
+      } catch { /* not JSON */ }
+      setDescAiError(errMsg);
+      setDescAiLoading(false);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let accumulated = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        setDescStreaming(accumulated);
+      }
+      if (accumulated) {
+        up({ description: accumulated });
+        setLocalDesc(accumulated);
+      }
+    } catch (err) {
+      if (err instanceof Error) setDescAiError(err.message);
+      else setDescAiError('Stream read failed.');
+    } finally {
+      setDescStreaming(null);
+      setDescAiLoading(false);
+    }
   }
 
   // ── ElevenLabs live playback ─────────────────────────────────────────────────
@@ -1255,7 +1344,7 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
 
   return (
     <aside
-      className="relative flex h-full shrink-0 flex-col border-l border-slate-200 bg-white"
+      className="relative z-20 flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white"
       style={{ width: panelWidth, borderLeftColor: `${colour}44` }}
     >
       {/* Resize handle — left edge */}
@@ -1265,13 +1354,13 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
         title="Drag to resize"
       />
 
-      {/* Panel header */}
-      <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
+      {/* Panel header — full node-colour background */}
+      <div className="flex items-center gap-2 border-b px-4 py-3" style={{ backgroundColor: colour, borderBottomColor: 'rgba(0,0,0,0.15)' }}>
         {/* Clickable type badge with dropdown */}
         <div className="relative" ref={typePickerRef}>
           <button
             className="flex items-center gap-1 rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white transition-opacity hover:opacity-80"
-            style={{ backgroundColor: colour }}
+            style={{ backgroundColor: 'rgba(0,0,0,0.2)' }}
             onClick={() => setTypePickerOpen((o) => !o)}
             title="Change node type"
           >
@@ -1301,19 +1390,40 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
 
         {/* Interaction type pill — only for Interactive/combat nodes */}
         {node.type === 'combat' && (
-          <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+          <span className="rounded bg-black/20 px-2 py-0.5 text-xs font-medium text-white">
             ⚔ {node.interactionType === 'dice-combat' ? 'Dice Combat' : (node.interactionType ?? 'Dice Combat')}
           </span>
         )}
 
-        <span className="flex-1 truncate font-mono text-xs text-slate-500">{node.id.slice(0, 8)}…</span>
+        <span className="flex-1 truncate font-mono text-xs text-white/60">{node.id.slice(0, 8)}…</span>
+
+        {/* Spine toggle */}
+        <div className="flex items-center rounded border border-white/30 overflow-hidden text-[10px]">
+          {([
+            { value: undefined, label: autoOnSpine ? 'Auto ✓' : 'Auto ✗', title: autoOnSpine ? 'Auto-detected: on spine' : 'Auto-detected: branch' },
+            { value: true,      label: 'Spine',  title: 'Force onto spine' },
+            { value: false,     label: 'Branch', title: 'Force off spine' },
+          ] as { value: boolean | undefined; label: string; title: string }[]).map(({ value, label, title }) => {
+            const active = node.spineNode === value;
+            return (
+              <button
+                key={String(value)}
+                title={title}
+                onClick={() => up({ spineNode: value })}
+                className={`px-1.5 py-0.5 transition-colors ${
+                  active ? 'bg-black/20 text-white' : 'text-white/60 hover:bg-black/10 hover:text-white'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
 
         {/* Lock toggle */}
         <button
           className={`rounded px-2 py-1 text-xs transition-colors ${
-            node.locked
-              ? 'bg-amber-50 text-amber-600 hover:bg-amber-100'
-              : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'
+            node.locked ? 'bg-black/20 text-white' : 'text-white/70 hover:bg-black/10 hover:text-white'
           }`}
           onClick={() => up({ locked: !node.locked })}
           title={node.locked ? 'Unlock node (allow editing)' : 'Lock node (prevent edits & deletion)'}
@@ -1324,7 +1434,7 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
         {/* Delete — hidden when locked */}
         {!node.locked && (
           <button
-            className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
+            className="rounded px-2 py-1 text-xs text-white/70 hover:bg-black/10 hover:text-white"
             onClick={() => deleteNode(selectedNodeId)}
           >
             Delete
@@ -1332,14 +1442,14 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
         )}
         <button
           onClick={onToggleExpand}
-          className="ml-1 text-slate-400 hover:text-slate-900"
+          className="ml-1 text-white/70 hover:text-white"
           aria-label={isExpanded ? 'Collapse panel' : 'Expand panel'}
           title={isExpanded ? 'Collapse' : 'Expand'}
         >
           {isExpanded ? '⤡' : '⤢'}
         </button>
         <button
-          className="ml-1 text-slate-400 hover:text-slate-900"
+          className="ml-1 text-white/70 hover:text-white"
           onClick={() => setSelectedNode(null)}
           aria-label="Close panel"
         >
@@ -1348,7 +1458,7 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
       </div>
 
       {/* Scrollable body — pointer-events disabled when locked */}
-      <div className={`flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-white ${node.locked ? 'pointer-events-none opacity-60' : ''}`}>
+      <div className={`min-h-0 flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-white ${node.locked ? 'pointer-events-none opacity-60' : ''}`}>
 
         {/* Title */}
         <div>
@@ -1372,6 +1482,44 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
             value={node.location ?? ''}
             onChange={(e) => up({ location: e.target.value })}
           />
+        </div>
+
+        {/* Description */}
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <label className="text-xs text-slate-400">Description</label>
+            <button
+              onClick={handleAiDescription}
+              disabled={descAiLoading}
+              title="Generate scene description with AI"
+              className={`rounded px-1.5 py-0.5 text-[9px] font-semibold transition-colors ${
+                descAiLoading
+                  ? 'bg-violet-100 text-violet-400 cursor-wait'
+                  : 'bg-violet-50 text-violet-500 hover:bg-violet-100 hover:text-violet-700'
+              }`}
+            >
+              {descAiLoading ? '…' : '✨'}
+            </button>
+          </div>
+          <textarea
+            rows={3}
+            className="w-full resize-none rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm placeholder-slate-400 focus:outline-none focus:ring-1"
+            style={{ '--tw-ring-color': colour, color: descStreaming ? '#7c3aed' : '#0f172a' } as React.CSSProperties}
+            placeholder="Add a description of this scene…"
+            value={descStreaming ?? localDesc}
+            readOnly={descAiLoading}
+            onChange={(e) => {
+              const val = e.target.value;
+              setLocalDesc(val);
+              if (descDebounceRef.current) clearTimeout(descDebounceRef.current);
+              descDebounceRef.current = setTimeout(() => {
+                up({ description: val || undefined });
+              }, 400);
+            }}
+          />
+          {descAiError && (
+            <p className="mt-0.5 text-[10px] text-red-500">⚠ {descAiError}</p>
+          )}
         </div>
 
         {/* ── Lanes assignment ── */}
