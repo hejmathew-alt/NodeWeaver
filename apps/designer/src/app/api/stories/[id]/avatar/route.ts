@@ -3,9 +3,9 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 // Cap uploads at 10 MB — avatars are 512×512 PNG, typically <1 MB.
+// Note: App Router reads raw stream; no bodyParser config needed.
 export const maxDuration = 30;
 export const dynamic = 'force-dynamic';
-export const config = { api: { bodyParser: { sizeLimit: '10mb' } } };
 
 const DATA_DIR = path.join(process.cwd(), 'data', 'stories');
 

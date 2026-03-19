@@ -20,7 +20,7 @@ export function autoLayout(nodes: Node[], edges: Edge[]): Node[] {
 
   for (const node of nodes) {
     const w = (node.style?.width as number | undefined) ?? 240;
-    const h = (node.style?.height as number | undefined) ?? 106;
+    const h = (node.style?.height as number | undefined) ?? 120;
     g.setNode(node.id, { width: w, height: h });
   }
 
@@ -49,7 +49,7 @@ export function autoLayout(nodes: Node[], edges: Edge[]): Node[] {
   return nodes.map((node) => {
     const pos = g.node(node.id);
     const w = (node.style?.width as number | undefined) ?? 240;
-    const h = (node.style?.height as number | undefined) ?? 106;
+    const h = (node.style?.height as number | undefined) ?? 120;
     const isSpine = spineNodeIds.size > 0 && spineNodeIds.has(node.id);
     return {
       ...node,
@@ -73,7 +73,7 @@ function toRect(node: Node): Rect {
     x: node.position.x,
     y: node.position.y,
     w: (node.style?.width  as number | undefined) ?? 240,
-    h: (node.style?.height as number | undefined) ?? 106,
+    h: (node.style?.height as number | undefined) ?? 120,
   };
 }
 

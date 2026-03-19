@@ -3,10 +3,9 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 // Cap uploads at 50 MB — audio files are typically <5 MB; this prevents DoS via huge uploads.
+// Note: App Router reads raw stream; bodyParser config is Pages Router only and has no effect here.
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
-// Next.js App Router body size limit (applies to PUT/POST)
-export const config = { api: { bodyParser: { sizeLimit: '50mb' } } };
 
 const DATA_DIR = path.join(process.cwd(), 'data', 'stories');
 

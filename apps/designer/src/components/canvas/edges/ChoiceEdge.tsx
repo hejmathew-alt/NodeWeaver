@@ -12,6 +12,7 @@ interface ChoiceEdgeData {
   sourceId?: string;
   choiceId?: string;
   _isSpineEdge?: boolean;
+  _isLoopBack?: boolean;
 }
 
 export function ChoiceEdge({
@@ -27,11 +28,12 @@ export function ChoiceEdge({
   style,
   selected,
 }: EdgeProps) {
-  // A loop-back connection exits from the LEFT of the source node (which sits to the
-  // right of its target). Route it as a U-curve dipping below the spine so readers
-  // can instantly see the backwards direction.
-  // In L→R layout: forward edges have sourceX < targetX; loop-backs have sourceX > targetX.
-  const isLoopBack = sourceX > targetX;
+  // A true loop-back connects to a node at an EARLIER BFS depth (flagged in storyToFlow).
+  // Geometric fallback (sourceX > targetX + 200) catches manually-wired edges not yet
+  // processed by storyToFlow. Same-depth sibling connections must NOT be flagged as
+  // loopbacks even though their right-handle X exceeds the sibling's left-handle X.
+  const edgeData = data as ChoiceEdgeData;
+  const isLoopBack = edgeData?._isLoopBack ?? (sourceX > targetX + 200);
 
   let edgePath: string;
   let labelX: number;
@@ -60,8 +62,7 @@ export function ChoiceEdge({
     });
   }
 
-  const edgeData = data as ChoiceEdgeData;
-  const rawLabel = edgeData?.label;
+  const rawLabel = (data as ChoiceEdgeData)?.label;
   const label = rawLabel && rawLabel.length > 30 ? rawLabel.slice(0, 30) + '…' : rawLabel;
   // Loop-backs are always branch weight regardless of spine membership
   const isSpineEdge = !isLoopBack && (edgeData?._isSpineEdge ?? false);

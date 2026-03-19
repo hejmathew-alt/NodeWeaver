@@ -88,6 +88,27 @@ interface StoryCanvasProps {
 function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
   const spineSet = computeSpine(story.nodes);
 
+  // BFS depths — used to detect true backwards edges vs same-depth sibling connections.
+  // Same-depth connections (targetDepth === sourceDepth) must NOT use the loopback U-curve
+  // because both nodes share the same canvas X, making sourceX (right-handle) > targetX
+  // (left-handle) even though the connection is not a story-graph loop-back.
+  const depths = new Map<string, number>();
+  const startId = story.nodes.find((n) => n.type === 'start')?.id;
+  if (startId) {
+    const q: Array<{ id: string; d: number }> = [{ id: startId, d: 0 }];
+    depths.set(startId, 0);
+    while (q.length) {
+      const { id, d } = q.shift()!;
+      const node = story.nodes.find((n) => n.id === id);
+      for (const c of node?.choices ?? []) {
+        if (c.next && !depths.has(c.next)) {
+          depths.set(c.next, d + 1);
+          q.push({ id: c.next, d: d + 1 });
+        }
+      }
+    }
+  }
+
   // Find nodes that have no incoming edges (orphaned — never connected as a target)
   const hasIncoming = new Set<string>();
   for (const n of story.nodes) {
@@ -100,7 +121,7 @@ function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
     id: n.id,
     type: n.type,
     position: n.position,
-    style: { width: n.width ?? 240, height: n.height ?? 106 },
+    style: { width: n.width ?? 240, height: n.height ?? 120 },
     data: {
       ...n,
       _isSpineNode: spineSet.has(n.id),
@@ -112,7 +133,13 @@ function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
   for (const node of story.nodes) {
     for (const choice of node.choices) {
       if (choice.next && node.type !== 'end' && story.nodes.some((n) => n.id === choice.next)) {
-        const isSpineEdge = spineSet.has(node.id) && spineSet.has(choice.next);
+        const srcDepth = depths.get(node.id) ?? 0;
+        const tgtDepth = depths.get(choice.next) ?? 0;
+        // A true loop-back is a connection to a node at an earlier BFS depth.
+        // Same-depth sibling connections (tgtDepth === srcDepth) are NOT loop-backs —
+        // don't use the U-curve for them even though sourceX > targetX geometrically.
+        const isLoopBack = depths.size > 0 && tgtDepth < srcDepth;
+        const isSpineEdge = !isLoopBack && spineSet.has(node.id) && spineSet.has(choice.next);
         edges.push({
           id: `${node.id}-${choice.id}`,
           type: 'choice',
@@ -121,7 +148,7 @@ function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
           // Migrate handle IDs: bottom/left/null→right, top/target-right/null→target-left
           sourceHandle: (!choice.sourceHandle || choice.sourceHandle === 'bottom' || choice.sourceHandle === 'left') ? 'right' : choice.sourceHandle,
           targetHandle: (!choice.targetHandle || choice.targetHandle === 'top' || choice.targetHandle === 'target-right') ? 'target-left' : choice.targetHandle,
-          data: { sourceId: node.id, choiceId: choice.id, label: choice.label, _isSpineEdge: isSpineEdge },
+          data: { sourceId: node.id, choiceId: choice.id, label: choice.label, _isSpineEdge: isSpineEdge, _isLoopBack: isLoopBack },
         });
       }
     }
