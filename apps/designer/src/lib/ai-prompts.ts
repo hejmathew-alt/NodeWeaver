@@ -20,6 +20,9 @@ export const NON_STREAMING_MODES = [
   'avatar-prompt',
   'loom-analyse',
   'lighting-suggest',
+  'seed-premise',
+  'seed-worldcast',
+  'seed-architecture',
 ];
 
 // ── Top-level builders (called by the route) ──────────────────────────────────
@@ -44,6 +47,11 @@ export function buildSystemPrompt(
     case 'loom-analyse':      return LOOM_ANALYSE_SYSTEM;
     case 'loom-chat':         return LOOM_CHAT_SYSTEM;
     case 'lighting-suggest':  return LIGHTING_SUGGEST_SYSTEM;
+    case 'node-description':  return buildNodeDescriptionSystem(context);
+    case 'seed-spark':        return SEED_SPARK_SYSTEM;
+    case 'seed-premise':      return buildSeedPremiseSystem(context);
+    case 'seed-worldcast':    return SEED_WORLDCAST_SYSTEM;
+    case 'seed-architecture': return SEED_ARCHITECTURE_SYSTEM;
     default:                  return buildBodySystem(context);
   }
 }
@@ -87,6 +95,16 @@ export function buildUserMessage(
       const ctx = context ?? {};
       return `Genre: ${ctx.genre ?? 'unknown'}\nScene: ${ctx.nodeTitle ?? 'Untitled'}${ctx.nodeMood ? `\nMood: ${ctx.nodeMood}` : ''}${ctx.nodeBody ? `\nContent: ${String(ctx.nodeBody).slice(0, 300)}` : ''}\n\nLighting description: ${ctx.description ?? prompt?.trim() ?? 'atmospheric'}`;
     }
+    case 'node-description':
+      return buildNodeDescriptionUser(context, prompt);
+    case 'seed-spark':
+      return buildSeedSparkUser(context, prompt);
+    case 'seed-premise':
+      return buildSeedPremiseUser(context, prompt);
+    case 'seed-worldcast':
+      return buildSeedWorldcastUser(context);
+    case 'seed-architecture':
+      return buildSeedArchitectureUser(context);
     default:
       return `Current body text:\n${prompt?.trim() || '(empty)'}\n\nWrite improved or new body text for this scene.`;
   }
@@ -165,6 +183,8 @@ STORY SHAPE:
 - Use "chat" for dialogue-heavy confrontations; "story" for general narrative
 - Vary scene locations across nodes — the story should feel like it moves through different places
 
+CHARACTER NAMES: Use culturally diverse, original names drawn from varied backgrounds — not just Nordic/Scandinavian. Mix nationalities, ethnicities, and name styles. Never reuse: Maren, Voss, Sigrid, Brandur, Thorvaldsen, Poulsen, Einar, or any name the user already has in their story.
+
 KEEP IT TIGHT — prose counts:
 - Prose blocks: 2–3 sentences maximum
 - Dialogue lines: 1–2 sentences maximum
@@ -199,6 +219,7 @@ OUTPUT: Return ONLY valid JSON. No markdown fences, no explanation, no preamble.
       "choices": [
         { "id": "ch1_1", "label": "Player-facing choice button text", "next": "n2" }
       ],
+      "description": "One sentence describing the dramatic action and what is at stake in this scene.",
       "status": "draft",
       "audio": [],
       "lanes": []
@@ -213,7 +234,7 @@ OUTPUT: Return ONLY valid JSON. No markdown fences, no explanation, no preamble.
       "traits": "Speech patterns, personality quirks.",
       "ttsProvider": "qwen",
       "qwenInstruct": "Voice description for TTS: pitch, timbre, pacing, emotional register. Studio-quality recording.",
-      "voiceLocked": false
+      "voiceLocked": true
     }
   ]
 }
@@ -222,6 +243,7 @@ ADDITIONAL RULES:
 - "end" nodes: choices array must be []
 - "line" blocks must have characterId that matches an id in characters[]
 - body field: always empty string "" (derived at runtime from blocks)
+- description field: exactly one sentence — dramatic function, present tense, no player instructions
 - Each non-end node: 2–4 blocks, 1–3 choices`;
 
 const SFX_SUGGEST_SYSTEM = `You are a professional sound designer for interactive fiction audio dramas.
@@ -316,6 +338,54 @@ Rules:
 - If no sensible executable action exists, set action to null.`;
 
 const LOOM_CHAT_SYSTEM = `You are Loom, a developmental editor embedded in NodeWeaver. Answer the writer's question about their story in 2–4 sentences. Apply story craft principles where relevant (McKee, Snyder, Truby, King, Le Guin). Be specific — reference actual character names and node titles from the context provided.`;
+
+// ── Node description ──────────────────────────────────────────────────────────
+
+function buildNodeDescriptionSystem(ctx?: Record<string, unknown>): string {
+  const genre = ctx?.genre as string | undefined;
+  const title = ctx?.storyTitle as string | undefined;
+  const gameDesc = title
+    ? `${title}, a ${genre ?? 'text'} interactive fiction story`
+    : `a ${genre ?? 'text'} interactive fiction story`;
+  const brief = ctx?.genreBrief as string | undefined;
+  let sys = `You are a narrative editor for ${gameDesc}.
+
+Write a single-sentence scene description for this story node.
+- One sentence only — no more
+- Present tense, editorial voice — describe the dramatic action and what is at stake
+- Focus on what happens and what changes, not player instructions
+- Be specific to this scene's content — never generic
+- Return only the description paragraph, nothing else`;
+  if (brief) sys += `\n\nGENRE VOICE: ${brief}`;
+  return sys;
+}
+
+function buildNodeDescriptionUser(ctx?: Record<string, unknown>, prompt?: string): string {
+  const parts: string[] = [];
+  if (ctx?.nodeType) parts.push(`Node type: ${ctx.nodeType}`);
+  if (ctx?.nodeTitle) parts.push(`Scene title: "${ctx.nodeTitle}"`);
+  if (ctx?.nodeLocation) parts.push(`Location: ${ctx.nodeLocation}`);
+  if (ctx?.logline) parts.push(`Story logline: ${ctx.logline}`);
+  if (Array.isArray(ctx?.blocks) && (ctx.blocks as unknown[]).length > 0) {
+    const blocks = ctx.blocks as { type: string; text: string; characterName?: string }[];
+    const lines = blocks
+      .filter((b) => b.text?.trim())
+      .map((b) => b.type === 'line' ? `${b.characterName ?? 'Character'}: "${b.text}"` : b.text)
+      .join('\n');
+    if (lines) parts.push(`Scene content:\n${lines}`);
+  }
+  if (Array.isArray(ctx?.characters) && (ctx.characters as unknown[]).length > 0) {
+    const chars = ctx.characters as { name: string; role: string }[];
+    parts.push(`Characters: ${chars.map((c) => `${c.name} (${c.role})`).join(', ')}`);
+  }
+  const existing = prompt?.trim();
+  const instruction = existing
+    ? `Rewrite or improve this description:\n${existing}`
+    : 'Write a description for this scene.';
+  return parts.length ? `${parts.join('\n')}\n\n${instruction}` : instruction;
+}
+
+// ── Lighting suggest ──────────────────────────────────────────────────────────
 
 const LIGHTING_SUGGEST_SYSTEM = `You are a narrative lighting designer for interactive fiction. Given a scene description and a natural-language lighting intent, return a sequence of VFX keyframes that create the described atmosphere.
 
@@ -747,4 +817,74 @@ function buildLoomChatUser(ctx?: Record<string, unknown>, prompt?: string): stri
       : null,
   ].filter(Boolean).join('\n');
   return `${summary}\n\nWriter's question: ${question}`;
+}
+
+// ── Seed AI prompts ──────────────────────────────────────────────────────────
+
+const SEED_SPARK_SYSTEM = `You are a creative collaborator helping a writer find the emotional core of their story idea.
+Respond in exactly 2 sentences. First sentence: reflect the emotional feeling or atmosphere they described, using evocative language — not a plot summary. Second sentence: optionally suggest a different genre if their idea sounds like it fits one strongly (e.g. "This feels more fantasy than sci-fi"). If their genre feels right, omit the second sentence.
+Never mention craft terminology, story structure, or writing advice. Pure feeling only.`;
+
+function buildSeedPremiseSystem(ctx?: Record<string, unknown>): string {
+  const genre = (ctx?.genre as string | undefined) ?? 'sci-fi';
+  const genreMeta = GENRE_META[genre as keyof typeof GENRE_META];
+  const brief = genreMeta?.brief ?? '';
+  return `You are helping a writer develop the core premise of their interactive story.
+Generate exactly 3 distinct premise options in the format: [who] wants [what] but [obstacle].
+Each premise should feel dramatically distinct — not variations of the same idea.
+${brief ? `Genre brief: ${brief}` : ''}
+Return JSON only. No preamble, no markdown fences.
+Format: { "options": [{ "who": "...", "wants": "...", "but": "...", "fullText": "..." }, ...] }
+fullText is the combined natural-language premise sentence.`;
+}
+
+const SEED_WORLDCAST_SYSTEM = `You are helping a writer build the world and characters for their interactive story.
+Given the locked premise, generate:
+- 5 to 7 world facts: specific, concrete single-sentence truths about this world (rules, textures, what people fear, social dynamics)
+- 2 to 4 characters: each with name, role, wound (their core damage/flaw), and want (what they're pursuing)
+The wound and want should create dramatic tension — the gap between them is where complexity lives.
+Never use dramatic theory terminology. Keep everything concrete and human.
+Return JSON only. No preamble, no markdown fences.
+Format: { "worldFacts": ["...", ...], "characters": [{ "name": "...", "role": "...", "wound": "...", "want": "..." }, ...] }`;
+
+const SEED_ARCHITECTURE_SYSTEM = `You are helping a writer plan the narrative architecture of their interactive story.
+Given the premise, world, and characters, generate:
+- 3 to 5 acts: each with a label (2-5 words describing the dramatic phase, NOT "Act 1") and emotionalBeat (the core emotional experience of this phase)
+- 3 to 5 jaw-drop moments: specific dramatic events that will surprise or move the reader, each with title (5-8 words), description (1-2 sentences), and position (early, middle, or late in the story)
+Jaw-drop moments must be specific to the premise and characters — not generic thriller beats.
+Return JSON only. No preamble, no markdown fences.
+Format: { "acts": [{ "label": "...", "emotionalBeat": "..." }, ...], "moments": [{ "title": "...", "description": "...", "position": "early" | "middle" | "late" }, ...] }`;
+
+function buildSeedSparkUser(ctx?: Record<string, unknown>, prompt?: string): string {
+  const genre = (ctx?.genre as string | undefined) ?? 'sci-fi';
+  return `Genre: ${genre}\n\nWriter's idea:\n${prompt?.trim() || '(nothing written yet)'}`;
+}
+
+function buildSeedPremiseUser(ctx?: Record<string, unknown>, prompt?: string): string {
+  const lines: string[] = [];
+  if (ctx?.genre) lines.push(`Genre: ${ctx.genre}`);
+  if (ctx?.sparkReflection) lines.push(`Spark reflection: ${ctx.sparkReflection}`);
+  if (prompt?.trim()) lines.push(`Writer's original spark: ${prompt.trim()}`);
+  return lines.join('\n') || 'Generate 3 premise options for a story.';
+}
+
+function buildSeedWorldcastUser(ctx?: Record<string, unknown>): string {
+  const lines: string[] = [];
+  if (ctx?.genre) lines.push(`Genre: ${ctx.genre}`);
+  if (ctx?.premise) lines.push(`Locked premise: ${ctx.premise}`);
+  return lines.join('\n') || 'Generate world facts and characters for this story.';
+}
+
+function buildSeedArchitectureUser(ctx?: Record<string, unknown>): string {
+  const lines: string[] = [];
+  if (ctx?.genre) lines.push(`Genre: ${ctx.genre}`);
+  if (ctx?.premise) lines.push(`Premise: ${ctx.premise}`);
+  if (Array.isArray(ctx?.worldFacts) && (ctx.worldFacts as string[]).length > 0) {
+    lines.push(`World facts:\n${(ctx.worldFacts as string[]).map((f) => `  - ${f}`).join('\n')}`);
+  }
+  if (Array.isArray(ctx?.characters) && (ctx.characters as unknown[]).length > 0) {
+    const chars = ctx.characters as { name: string; role: string; wound: string; want: string }[];
+    lines.push(`Characters:\n${chars.map((c) => `  - ${c.name} (${c.role}): wound="${c.wound}", want="${c.want}"`).join('\n')}`);
+  }
+  return lines.join('\n') || 'Generate narrative architecture for this story.';
 }

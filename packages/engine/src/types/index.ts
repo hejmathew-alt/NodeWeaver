@@ -174,6 +174,8 @@ export interface NWVNode {
   location?: string;
   /** Scene headline */
   title?: string;
+  /** AI-drafted or manually written 1-paragraph scene overview. Designer-only; not exported to engine. */
+  description?: string;
   /**
    * Main narrative text (HTML allowed).
    * Auto-derived from prose blocks (deriveBody) — kept for game engine compat.
@@ -224,6 +226,16 @@ export interface NWVNode {
   position: { x: number; y: number };
   width?: number;
   height?: number;
+  /** Spine override: undefined = auto-detect, true = force on spine, false = force off */
+  spineNode?: boolean;
+  /** Act column this node belongs to (informational — not enforced) */
+  actId?: string;
+
+  // --- Seed AI blueprint flags ---
+  /** Planted by Seed AI — treat as narrative anchor; warn before deleting */
+  isRoot?: boolean;
+  /** Planted as a jaw-drop candidate by Seed AI — rendered with amber High Impact treatment */
+  isHighImpact?: boolean;
 }
 
 // ------------------------------------------------------------
@@ -385,6 +397,34 @@ export interface NWVStoryMetadata {
   updatedAt: string;
 }
 
+// ------------------------------------------------------------
+// Act Columns
+// ------------------------------------------------------------
+
+export interface ActColumn {
+  id: string;
+  /** Display label e.g. "ACT 1 — SETUP" */
+  label: string;
+  /** Left-to-right ordering index */
+  order: number;
+  /** Left edge position in canvas world-space units */
+  worldX: number;
+  /** Width in canvas world-space units */
+  worldWidth: number;
+}
+
+// ------------------------------------------------------------
+// Seed AI Blueprint
+// ------------------------------------------------------------
+
+export interface SeedBlueprint {
+  premise: string;
+  worldFacts: string[];
+  seedCharacters: Array<{ name: string; role: string; wound: string; want: string }>;
+  acts: Array<{ label: string; emotionalBeat: string }>;
+  jawDropMoments: Array<{ title: string; description: string; position: 'early' | 'middle' | 'late' }>;
+}
+
 export interface NWVStory {
   version: '1.0';
   id: string;
@@ -394,6 +434,10 @@ export interface NWVStory {
   lanes: NWVLane[];
   enemies: Record<string, NWVEnemy>;
   world?: NWVWorldData;
+  /** Act column definitions — vertical bands on the canvas */
+  acts?: ActColumn[];
+  /** Seed AI blueprint — the conversational output that generated this story's scaffold */
+  seedBlueprint?: SeedBlueprint;
 }
 
 // ------------------------------------------------------------

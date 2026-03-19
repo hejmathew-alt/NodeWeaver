@@ -71,6 +71,18 @@ export async function POST(req: NextRequest) {
     const cleaned = text.replace(/^```(?:json)?\s*/im, '').replace(/\s*```$/im, '').trim();
     if (mode === 'command-interpret') return NextResponse.json({ command: cleaned });
     if (mode === 'world-step' || mode === 'world-recycle') return NextResponse.json({ world: cleaned });
+    // For seed modes: extract JSON object from response (handles extra prose before/after)
+    if (mode === 'seed-premise' || mode === 'seed-worldcast' || mode === 'seed-architecture') {
+      const jsonMatch = /\{[\s\S]*\}/.exec(cleaned);
+      const jsonStr = jsonMatch ? jsonMatch[0] : cleaned;
+      try {
+        const parsed = JSON.parse(jsonStr);
+        if (mode === 'seed-premise') return NextResponse.json({ options: parsed.options ?? [] });
+        return NextResponse.json(parsed);
+      } catch {
+        return NextResponse.json({ error: `Failed to parse ${mode} response.` }, { status: 500 });
+      }
+    }
     return NextResponse.json({ suggestions: cleaned });
   }
 

@@ -535,6 +535,233 @@ Format: `type: short description`
 
 ---
 
+### Node Display & Canvas Cleanup
+
+Two connected improvements: what each node shows on the canvas, and how the canvas itself is organised and rendered. Both serve the same goal — the canvas is a navigation layer, not a reading layer.
+
+**1. Node Summary (AI-Drafted)**
+
+Each node displays a short AI-drafted summary at the top of the node editor instead of prose content or dialogue. This summary is also what renders on the canvas card.
+
+*Two summary fields:*
+
+| Field | Length | Used for |
+|-------|--------|----------|
+| `summary` | 6–10 words | Node card at mid/close zoom |
+| `label` | 2–3 words | Node card at far zoom |
+
+Both describe dramatic function, not prose content.
+- Good: `"Player discovers they were never alone"`
+- Bad: `"Elsie says she couldn't see anything from there"`
+
+*Generation behaviour:*
+- On node creation: empty, shows placeholder `"No summary yet — start writing or generate one"`
+- Generate Summary button fires a Claude API call on demand
+- Auto-regenerates silently on significant content change (debounced)
+- Manual edit locks auto-regen — indicated by a lock icon (🔒)
+- Lock can be toggled — unlocking re-enables auto-regen
+- Regenerate button always available regardless of lock state
+
+*API call:*
+```js
+const response = await fetch("https://api.anthropic.com/v1/messages", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 100,
+    system: `You are a narrative editor working on an interactive fiction project. Write concise directorial node summaries describing dramatic function — not prose content or dialogue. Respond with valid JSON only. No preamble or markdown.`,
+    messages: [{
+      role: "user",
+      content: `Generate a summary for this story node.
+
+Node type: ${nodeType}
+Node content: ${nodeContent}
+Recent story context (preceding spine nodes): ${recentContext}
+
+Respond with exactly:
+{
+  "summary": "6-10 word dramatic summary",
+  "label": "2-3 word canvas label"
+}`
+    }]
+  })
+});
+
+const data = await response.json();
+const text = data.content.find(b => b.type === "text")?.text ?? "";
+const { summary, label } = JSON.parse(text);
+```
+
+*Context packet (pass into every call):*
+- `nodeType` — STORY / TWIST / CHAT / END etc.
+- `nodeContent` — full prose and dialogue of the node
+- `recentContext` — summaries of the 3 preceding spine nodes (not full prose)
+
+*Node editor UI:*
+```
+┌─────────────────────────────────────────────────┐
+│ STORY  draft                          [ × close ]│
+├─────────────────────────────────────────────────┤
+│ SUMMARY                                    ✎ 🔒 │
+│ ┌─────────────────────────────────────────────┐ │
+│ │ Player discovers they were never alone      │ │
+│ └─────────────────────────────────────────────┘ │
+│                          [ ↺ Regenerate summary ]│
+├─────────────────────────────────────────────────┤
+│ Node content / prose editor below...            │
+```
+
+*Error handling:*
+- API failure: keep existing summary, show subtle retry option
+- JSON parse failure: extract first sentence of response as fallback
+- Never clear an existing summary on a failed regeneration
+
+*Data model additions:*
+```ts
+interface NodeData {
+  summary: string;
+  label: string;
+  summaryLocked: boolean;
+  summaryGeneratedAt: Date;
+}
+```
+
+---
+
+**2. Canvas Visual Cleanup**
+
+*Layout direction: Top-to-Bottom → Left-to-Right with spine*
+- Spine runs horizontally left to right through act columns
+- Branches diverge above or below the spine, always within the same act column
+- Branches reconnect before act boundaries — nothing spans columns unresolved
+- All node exits from right edge only, all entries from left edge only
+- No line crossings within an act column
+
+```
+| ACT 1           | ACT 2               | ACT 3         |
+|                 |    ○ branch above   |               |
+| ○ ────────────► | ○ ──────────────── ►| ○ ──────────► |
+|                 |    ○ branch below   |               |
+```
+
+*Node dimensions — standardised:*
+```
+Width:         240px fixed (all node types)
+Height:        72px collapsed (fixed default)
+Height:        auto on expand (author-triggered only)
+Border radius: 8px
+```
+Every node is the same size. Always. Content truncates. The canvas is never a reading surface.
+
+*Node type — left border stripe replaces badges:*
+
+| Node Type | Colour | Hex |
+|-----------|--------|-----|
+| START | Green | `#4ADE80` |
+| STORY | Teal | `#2DD4BF` |
+| TWIST | Purple | `#A78BFA` |
+| CHAT | Blue | `#60A5FA` |
+| END | Orange | `#FB923C` |
+
+- Draft state: border stripe at 60% opacity, background slightly desaturated
+- Complete state: full colour stripe, clean background
+- No separate status badge needed
+
+*Collapsed node shows only:*
+- Summary (or label at far zoom)
+- Emotional beat tag (small, bottom-left)
+- Type communicated via border stripe
+
+*Collapsed node does NOT show:*
+- Prose content, dialogue lines, speaker labels, character names
+
+*Connection lines:*
+
+Routing:
+- Branches above spine curve gently upward, never crossing downward branches
+- Auto-layout enforces no crossings within act columns
+
+Line weight:
+- Spine connections: 3px solid
+- Branch connections: 1.5px solid
+- Converging (returning to spine): 1.5px dashed
+
+Choice label pills:
+- Sit centred on the connection line — not floating near nodes
+- Pill style: dark background, light text, font-size 11px
+- Truncate at 32 characters, full label on hover
+
+*Zoom-dependent rendering:*
+
+| Zoom | Node shows | Lines |
+|------|-----------|-------|
+| Close (>80%) | Summary + beat tag + type icon | Full weight + choice pills |
+| Mid (40–80%) | Summary only | Full weight + choice pills |
+| Far (15–40%) | Label (2–3 words) only | Simplified, no pills |
+| Very far (<15%) | Type colour block only | Thin lines, no labels |
+
+*Hover & selection behaviour:*
+- Node hover: non-connected nodes and lines dim to 20% opacity, connected path stays full brightness
+- Node select: focus ring in type colour, connected path full brightness, all else at 20%
+- Line hover: highlights to source node type colour, choice pill expands to full label
+
+*Emotional beat tag:*
+
+Small coloured dot + lowercase label, bottom-left of collapsed node.
+
+| Beat | Label | Dot colour |
+|------|-------|-----------|
+| Setup | `setup` | Grey |
+| Escalation | `escalation` | Yellow |
+| Peak | `peak` | Red |
+| Reversal | `reversal` | Purple |
+| Release | `release` | Green |
+| Cliffhanger | `cliffhanger` | Orange |
+| Breathing room | `breath` | Blue |
+
+Author-assigned or AI-suggested. Feeds the tension curve visualiser.
+
+*Act columns:*
+- Very subtle background tint per column
+- Column header pinned at top of viewport while scrolling: `"ACT 1 — SETUP"` etc.
+- Single 1px vertical rule at column boundary, opacity: 0.15
+
+*Canvas background:*
+- Subtle dot grid, opacity: 0.3
+- Grid spacing matches node rhythm
+- Dark mode default
+
+*Data model additions:*
+```ts
+interface NodeVisual {
+  beatTag: 'setup' | 'escalation' | 'peak' | 'reversal' | 'release' | 'cliffhanger' | 'breath';
+  isExpanded: boolean;
+  actColumn: number;
+  spineNode: boolean;
+}
+
+interface EdgeVisual {
+  routeAboveSpine: boolean;
+  choiceLabel: string;
+  choiceLabelFull: string;
+  isSpineConnection: boolean;
+}
+```
+
+*Implementation Priority:*
+1. Fix node dimensions — uniform width/height, biggest immediate scannability win, minimal effort
+2. Replace type badges with left border stripe — cleaner visual hierarchy
+3. Left-to-right layout with act columns — structural foundation
+4. Move choice labels onto lines as pills — eliminates floating label noise
+5. AI summary generation — replaces prose preview with dramatic function label
+6. Zoom-dependent rendering tiers — canvas readable at any distance
+7. Hover dimming behaviour — path tracing without moving anything
+8. Emotional beat tag system — feeds tension curve visualiser
+9. Act column tinting and pinned headers — spatial anchoring
+
+---
+
 ### Canvas Direction & Narrative Quality (Design Session)
 
 **1. Canvas Direction Change: Top-to-Bottom → Left-to-Right with Central Spine**
@@ -639,6 +866,8 @@ Embeds editorial quality into the tool so future authors get guardrails by defau
 - ~~Audio WAV→MP3 compression~~ — **Implemented in Session 11**
 - **ZIP export bundling** — Bundle `.nwv` + `_audio/` folder into a single ZIP for browsers without File System Access API.
 - ~~Inspire Me~~ — **Implemented** (dashboard AI story concept generator with Quick Start / Write It Myself exits)
+
+- **Inspire Me — Movie Trailer Narrator** — After the AI generates a story concept on the Inspire Me screen, a narrator automatically reads it aloud in a low, cinematic movie trailer voice before the user makes a choice. Uses the local Qwen TTS server with a specific `qwenInstruct` voice prompt (e.g. `"Deep, resonant male narrator voice. Movie trailer register. Slow, deliberate pacing. Gravitas."`) and a low voice seed. Should auto-trigger on concept reveal with no play button required — the concept text fades in while the narration plays. A subtle "▶ Replay" button replays on demand. Implementation: fire a `/api/qwen/speak` request with the full concept text and the narrator instruct on `onConceptGenerated`; stream audio via `TTSPlayer`; animate the concept text in sync.
 
 - **iOS Player App** — Subscription iOS app delivering NodeWeaver-produced interactive stories to players. Architecture: thin native Swift shell (WKWebView wrapper) + NodeWeaver web player (TypeScript/React, CC maintains). Native shell handles App Store presence, StoreKit 2 subscriptions, push notifications, app lifecycle. Web player handles story playback, VFX pipeline, audio pipeline (pre-generated WAVs), character portraits. Monetisation: free tier (2–3 starter stories), subscription unlocks all content + future episodes; episodic release cadence. Story delivery: bundled assets or on-demand download from server; subscription state passed from Swift shell into web layer. Testing workflow: iOS Simulator (free, ships with Xcode) → direct Xcode install (plug in device, instant) → TestFlight (hours review) → App Store (1–7 days first, 24–48h updates). Apple Developer Program ($99/year) required for device testing + submission. Apple takes 30% (15% after year one). Open questions: bundled vs. on-demand stories; price point; iPhone/iPad/universal; rotating vs. fixed free tier.
 
