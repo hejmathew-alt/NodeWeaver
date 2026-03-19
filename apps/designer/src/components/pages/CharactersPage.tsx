@@ -740,20 +740,72 @@ export function CharactersPage() {
   const addCharacter = useStoryStore((s) => s.addCharacter);
   const setActiveView = useStoryStore((s) => s.setActiveView);
   const updateMetadata = useStoryStore((s) => s.updateMetadata);
+  const updateCharacter = useStoryStore((s) => s.updateCharacter);
+  const [lockPromptOpen, setLockPromptOpen] = useState(false);
 
   if (!activeStory) return null;
 
   const characters = activeStory.characters;
   const nodes = activeStory.nodes;
 
+  const unlockedNonNarrator = characters.filter(
+    (c) => c.id !== 'narrator' && !c.voiceLocked,
+  );
+
+  function handleBackToCanvas() {
+    if (unlockedNonNarrator.length > 0) {
+      setLockPromptOpen(true);
+    } else {
+      setActiveView('canvas');
+    }
+  }
+
+  function handleLockAllAndReturn() {
+    for (const c of unlockedNonNarrator) {
+      updateCharacter(c.id, { voiceLocked: true });
+    }
+    setActiveView('canvas');
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-slate-50 p-6">
+      {/* Lock-all prompt */}
+      {lockPromptOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-80 rounded-xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <p className="mb-1 font-semibold text-slate-900">Lock all voices?</p>
+            <p className="mb-4 text-sm text-slate-500">
+              {unlockedNonNarrator.length} character{unlockedNonNarrator.length !== 1 ? 's have' : ' has'} unlocked voices. Lock them before returning?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleLockAllAndReturn}
+                className="flex-1 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700"
+              >
+                Lock all &amp; return
+              </button>
+              <button
+                onClick={() => setActiveView('canvas')}
+                className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+              >
+                Return anyway
+              </button>
+            </div>
+            <button
+              onClick={() => setLockPromptOpen(false)}
+              className="mt-2 w-full rounded-lg px-3 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       <div className="mx-auto max-w-7xl">
         {/* Header */}
         <div className="mb-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setActiveView('canvas')}
+              onClick={handleBackToCanvas}
               className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
               title="Back to canvas"
             >
