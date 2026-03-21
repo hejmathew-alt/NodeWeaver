@@ -37,6 +37,8 @@ import threading
 import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+import wave
+
 import numpy as np
 import soundfile as sf
 
@@ -45,11 +47,11 @@ import soundfile as sf
 # Use the already-cached 8-bit MLX model (balance of speed and quality on M4).
 MODEL_ID = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit"
 
-# Qwen3-TTS bleeds instruct/voice-conditioning tokens into the first ~200ms of
-# audio before the model locks onto the actual spoken text.  Trimming this
-# preamble from the first audio chunk eliminates the "wrong first words" artefact
-# without affecting the rest of the synthesis.
-TRIM_START_MS = 200
+# Trim + fade disabled for streaming — causes click artifacts and eats speech.
+# The old void-runner server had zero processing and produced clean audio.
+# Kept for the full-synthesis /speak endpoint where all chunks are concatenated first.
+TRIM_START_MS = 0
+FADE_IN_MS = 0
 
 # ── Lazy model singleton ──────────────────────────────────────────────────────
 
@@ -58,7 +60,12 @@ _model_lock = threading.Lock()
 
 
 def _load_model():
-    """Load Qwen3-TTS model once; subsequent calls return the cached instance."""
+    """Load Qwen3-TTS model once; subsequent calls return the cached instance.
+
+    Uses mlx_audio.tts.load_model (the standard path) — not the lower-level
+    Model.from_pretrained, which routes through generate_voice_design and
+    produced click artifacts at streaming chunk boundaries.
+    """
     global _model
     if _model is not None:
         return _model
@@ -66,8 +73,8 @@ def _load_model():
         if _model is not None:
             return _model
         print(f"[qwen_server] Loading {MODEL_ID}…", flush=True)
-        from mlx_audio.tts.models.qwen3_tts import Model
-        _model = Model.from_pretrained(MODEL_ID)
+        from mlx_audio.tts import load_model
+        _model = load_model(model_path=MODEL_ID)
         print("[qwen_server] Model ready.", flush=True)
         return _model
 
@@ -75,14 +82,32 @@ def _load_model():
 # ── Audio helpers ─────────────────────────────────────────────────────────────
 
 def _array_to_wav_bytes(audio, sample_rate: int) -> bytes:
-    """Convert an mlx array or float32 numpy array to WAV bytes."""
-    audio_np = np.array(audio, dtype=np.float32)
-    if audio_np.ndim > 1:
-        audio_np = audio_np.mean(axis=-1)
+    """Convert an mlx array or float32 numpy array to WAV bytes (16-bit PCM mono).
+
+    Uses the stdlib wave module with explicit PCM conversion — proven path
+    from the original void-runner server that produced clean audio.
+    """
+    audio_np = np.array(audio, dtype=np.float32).flatten()
+    audio_np = np.clip(audio_np, -1.0, 1.0)
+    pcm = (audio_np * 32767).astype(np.int16)
     buf = io.BytesIO()
-    sf.write(buf, audio_np, sample_rate, format="WAV", subtype="PCM_16")
-    buf.seek(0)
-    return buf.read()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(pcm.tobytes())
+    return buf.getvalue()
+
+
+def _trim_and_fade(audio_np: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Trim instruct bleed from the start and apply a short fade-in."""
+    trim_n = int(TRIM_START_MS * sample_rate / 1000)
+    audio_np = audio_np[trim_n:]
+    fade_n = min(int(FADE_IN_MS * sample_rate / 1000), len(audio_np))
+    if fade_n > 0:
+        audio_np = audio_np.copy()
+        audio_np[:fade_n] *= np.linspace(0.0, 1.0, fade_n, dtype=np.float32)
+    return audio_np
 
 
 def _wav_bytes_to_float32_16k(wav_bytes: bytes) -> np.ndarray:
@@ -101,23 +126,24 @@ def _wav_bytes_to_float32_16k(wav_bytes: bytes) -> np.ndarray:
 
 # ── Synthesis ─────────────────────────────────────────────────────────────────
 
-def _iter_voice_design(text: str, instruct: str, seed: int, temperature: float,
-                       streaming_interval: float, max_tokens: int):
+def _iter_streaming(text: str, instruct: str, seed: int, temperature: float,
+                    streaming_interval: float, max_tokens: int):
     """
     Yield (audio_mlx_array, sample_rate) for each streaming chunk.
-    Uses mlx.random.seed for voice consistency across calls with the same seed.
+    Uses the standard _model.generate() path — the original approach that
+    produced clean audio in the void-runner server.
     """
     import mlx.core as mx
     mx.random.seed(seed)
     model = _load_model()
-    for result in model.generate_voice_design(
-        text,
+    for result in model.generate(
+        text=text,
         instruct=instruct,
-        language="auto",
         temperature=temperature,
-        max_tokens=max_tokens,
         stream=True,
         streaming_interval=streaming_interval,
+        max_tokens=max_tokens,
+        verbose=False,
     ):
         yield result.audio, result.sample_rate
 
@@ -224,7 +250,7 @@ class QwenHandler(BaseHTTPRequestHandler):
     def _handle_speak(self, body: dict):
         """Full WAV synthesis — collect all chunks, return one WAV blob."""
         try:
-            chunks = list(_iter_voice_design(
+            chunks = list(_iter_streaming(
                 text=body.get("text", ""),
                 instruct=body.get("instruct", ""),
                 seed=int(body.get("seed", 42)),
@@ -238,9 +264,7 @@ class QwenHandler(BaseHTTPRequestHandler):
             # Concatenate all chunk arrays
             all_audio = np.concatenate([np.array(c[0], dtype=np.float32) for c in chunks])
             sample_rate = chunks[0][1]
-            # Trim instruct bleed-through from the start
-            trim_samples = int(TRIM_START_MS * sample_rate / 1000)
-            all_audio = all_audio[trim_samples:]
+            all_audio = _trim_and_fade(all_audio, sample_rate)
             wav_bytes = _array_to_wav_bytes(all_audio, sample_rate)
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
@@ -263,8 +287,7 @@ class QwenHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
 
-            first_chunk = True
-            for audio, sample_rate in _iter_voice_design(
+            for audio, sample_rate in _iter_streaming(
                 text=body.get("text", ""),
                 instruct=body.get("instruct", ""),
                 seed=int(body.get("seed", 42)),
@@ -272,15 +295,7 @@ class QwenHandler(BaseHTTPRequestHandler):
                 streaming_interval=float(body.get("streaming_interval", 0.32)),
                 max_tokens=int(body.get("max_tokens", 4096)),
             ):
-                audio_np = np.array(audio, dtype=np.float32)
-                if first_chunk:
-                    # Trim instruct bleed-through from the start of synthesis
-                    trim_samples = int(TRIM_START_MS * sample_rate / 1000)
-                    audio_np = audio_np[trim_samples:]
-                    first_chunk = False
-                if audio_np.size == 0:
-                    continue
-                wav_bytes = _array_to_wav_bytes(audio_np, sample_rate)
+                wav_bytes = _array_to_wav_bytes(audio, sample_rate)
                 length_prefix = struct.pack(">I", len(wav_bytes))
                 try:
                     self.wfile.write(length_prefix + wav_bytes)
@@ -292,6 +307,14 @@ class QwenHandler(BaseHTTPRequestHandler):
         except Exception:
             traceback.print_exc()
             # Headers already sent; can't send an error response — just close
+        finally:
+            # Free MLX GPU memory after each generation to prevent
+            # fragmentation-induced hangs on long sessions.
+            try:
+                import mlx.core as mx
+                mx.metal.clear_cache()
+            except Exception:
+                pass
 
     def _handle_timestamps(self, body: dict):
         """
