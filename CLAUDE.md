@@ -149,7 +149,26 @@ Voice design params per block: `[Emotional: X] [Tone: Y] [Voice: Z]` bracket tag
 
 **Python venv**: `servers/venv/` — torch 2.10, diffusers 0.31, transformers 4.57.
 
-## AI Co-Author
+## AI Tool Suite
+
+Four AI tools with an organic metaphor — **Seed**, **Loom**, **Canopy**, **Graft**:
+
+| Tool | Purpose | Status |
+|------|---------|--------|
+| **Seed** | Plants the story — conversation-first wizard for concept → premise → cast → architecture → canvas | Implemented |
+| **Loom** | Weaves the nodes — per-node developmental editor with structural analysis | Implemented |
+| **Canopy** | Watches the whole shape from above — story-level structural advisor | Future |
+| **Graft** | Makes careful interventions that change direction — narrative tutor | Future |
+
+### Seed
+
+Conversation-first tabbed panel (`SeedModal.tsx`). Four tabs: **Conversation** (freeform chat), **Premise** (3 structured cards), **Cast** (character cards with wound/want), **Architecture** (act spine + jaw-drop moments). "Plant this seed" creates NWVStory scaffold.
+
+- `POST /api/seed-chat` — streaming conversational responses with multi-turn history, phase-scoped prompts
+- `POST /api/seed-generate` — structured JSON generation for premise/cast/architecture tabs
+- Prompts in `lib/ai-prompts.ts`: `buildSeedChatSystem()`, `buildSeedGenerateSystem()`, `buildSeedGenerateUser()`
+
+### AI Co-Author
 
 Uses Claude Sonnet via `/api/ai/generate`. Five modes:
 - **voice** — generates Qwen TTS instruct prompt from voice concept (300 tokens)
@@ -206,7 +225,7 @@ Context builder (`lib/context-builder.ts`) does BFS from roots to build: ancestr
 - For intervals inside async IIFEs (e.g. playback loops): move the interval ID out of the IIFE so the `useEffect` cleanup can reach it. Or check `isMounted` at the top of the interval callback.
 
 ### Daemon / Subprocess Paths
-- All server script paths and venv paths are rooted at `os.homedir() + 'Documents/NodeWeaver/servers/'`. Follow the pattern established in `comfyui-daemon.ts`. Never hardcode paths from a previous project location.
+- All server script paths and venv paths are rooted at `os.homedir() + 'Documents/Claude Projects/NodeWeaver/servers/'`. Follow the pattern established in `comfyui-daemon.ts`. Never hardcode paths from a previous project location.
 
 ### Constants
 - Debounce timings, token limits, and other magic numbers belong in named constants, not inline literals. Prefer adding them to the relevant module (e.g. `DEBOUNCE_PERSIST` near the top of `store/story.ts`) rather than scattering them as bare numbers.
@@ -260,6 +279,27 @@ Format: `type: short description`
 ## Progress Log
 
 *Updated as work proceeds. Most recent first.*
+
+### Session 21 — 2026-03-20
+- **AI Tool Suite renaming** — Dropped "AI" from tool names. Full suite: Seed · Loom · Canopy · Graft (organic metaphor: plant → weave → watch → intervene)
+- **Seed UI rewrite** — Replaced single-phase wizard (`SeedAIModal.tsx`) with conversation-first tab model (`SeedModal.tsx`):
+  - **4 tabs**: Conversation | Premise | Cast | Architecture
+  - **Conversation tab** — freeform chat with phase-scoped system prompts (spark → premise → cast → architecture); suggestion chips via `[CHIPS: ...]` format; genre picker always visible; locked state indicators
+  - **Premise tab** — 3 structured premise cards ([who] wants [what] but [obstacle]), click to select and lock; regenerate button
+  - **Cast tab** — 2–4 character cards with name, role, wound, want; fully editable inline; add/remove characters
+  - **Architecture tab** — act spine (Early / Middle / Late columns) + jaw-drop moments (amber cards with position cycling); "Plant this seed" button
+  - **Tab dot indicators** — grey (not yet populated), green (done), primary (active)
+  - **Progressive disclosure** — structured tabs populate via dedicated generation calls, not extracted from chat
+- **New API routes**:
+  - **`/api/seed-chat/route.ts`** — streaming conversational endpoint; accepts `phase`, `history[]`, `locked` state, `message`; builds system prompt from phase instruction + locked state + persona rules
+  - **`/api/seed-generate/route.ts`** — structured JSON endpoint; accepts `type` (premises/cast/architecture), `conversationSummary`, `lockedState`; returns typed JSON
+- **New prompts** (`lib/ai-prompts.ts`):
+  - `buildSeedChatSystem()` — dynamic system prompt from phase + locked state + persona; phase instructions scope Claude to one job per phase
+  - `buildSeedGenerateSystem()` / `buildSeedGenerateUser()` — structured generation prompts for each tab type
+  - `SEED_PERSONA` — warm, direct tone; one question or one chip set per response; no craft terminology
+  - `SEED_PHASE_INSTRUCTIONS` — per-phase scoping rules (spark: feeling only; premise: stakes and obstacles; cast: wound/want gaps; architecture: emotional shape)
+- **Renaming across codebase**: `SeedAIModal` → `SeedModal`, `showSeedAI` → `showSeed`, `onSeedAI` → `onSeed`, `Seed AI` → `Seed` in all UI labels, toolbar titles, store messages
+- **Old `SeedAIModal.tsx` preserved** — kept for reference, no longer imported anywhere
 
 ### Session 20 — 2026-03-18
 - **Test suite** — Full Vitest + Playwright setup, 76 tests passing (28 unit, 27 integration, 21 E2E):
@@ -827,7 +867,7 @@ The existing Focus Mode is the foundation of the Outline/Writer view — extend,
 - **Audio-only preview mode** — strip all visual context and play a scene with TTS only, inside NodeWeaver; mandatory QA step before shipping
 - **Ambiguity linter** — flag lines containing visual references ("the red door", "you can see", "on the left") that are meaningless in blind mode
 
-**4. AI Narrative Tutor**
+**4. Graft (Narrative Tutor)**
 
 Philosophy: the tutor operates as a dramaturg, not a generator. It asks questions, surfaces structural weaknesses, and offers options — it does not decide. Keeps the author's voice intact while providing professional-level structural guidance.
 
@@ -854,7 +894,7 @@ Embeds editorial quality into the tool so future authors get guardrails by defau
 
 **Implementation Priority Suggestion:**
 1. Canvas reorientation (L→R spine + act columns) — structural foundation
-2. Focus Mode tutor panel — highest authoring value, leverages existing mode
+2. Focus Mode Graft panel — highest authoring value, leverages existing mode
 3. Emotional beat tagging + tension curve visualiser — makes the canvas readable
 4. Context packet builder — unlocks quality AI generation and tutor features
 5. Voice bible editor + drift detector — protects character consistency at scale
@@ -887,7 +927,7 @@ Embeds editorial quality into the tool so future authors get guardrails by defau
 
 - **Live Narrative Simulation (Story Debugger)** — A "debug mode" overlay on the canvas that simulates a player walk-through in real time: active node glows, visited nodes dim to indicate they've been seen, chosen edges highlight in a traced path colour, hover over a node to see "reachable from X paths, visited Y times in Z playthroughs" stats. Run multiple simultaneous trace paths to visualize branching coverage. Helps writers identify unreachable nodes, dead ends, and overly linear sections.
 
-- **AI Story Co-Pilot** — Persistent side panel or floating widget with graph-aware structural advice. Analyses the full story graph and flags: long linear runs with no branches ("consider a choice here"), nodes with too many choices (decision fatigue), unreachable orphan nodes, missing end nodes on branches, low twist density by act. Also proactively suggests where to place a twist or introduce a character callback. Different from the per-node AI assist — this is story-level structural intelligence.
+- **Canopy (Story Co-Pilot)** — Persistent side panel or floating widget with graph-aware structural advice. Analyses the full story graph and flags: long linear runs with no branches ("consider a choice here"), nodes with too many choices (decision fatigue), unreachable orphan nodes, missing end nodes on branches, low twist density by act. Also proactively suggests where to place a twist or introduce a character callback. Different from the per-node Loom — this is story-level structural intelligence.
 
 - **Audio-Driven Storytelling / Listen Mode** — An enhanced PlayMode variant where the story is presented as an interactive audio drama: ambient sound fades in before narration begins, music layers under dialogue, choices are read aloud by a neutral voice, user selects by voice or tap. Optimised for eyes-closed listening (phone in pocket / accessibility use case). Separate "Listen Mode" button in the story header alongside the existing Play button.
 

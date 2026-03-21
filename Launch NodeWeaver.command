@@ -1,5 +1,6 @@
 #!/bin/bash
+# Launch NodeWeaver dev server
+# Double-click this file to start the designer on http://localhost:3000
+
 cd "$(dirname "$0")"
-echo "🧵 Starting NodeWeaver on http://localhost:3001 ..."
-echo ""
-pnpm dev --port 3001
+pnpm dev

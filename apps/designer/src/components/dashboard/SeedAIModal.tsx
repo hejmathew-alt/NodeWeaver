@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid';
 import type { NWVStory, NWVNode, NWVCharacter, NWVChoice, GenreSlug, SeedBlueprint } from '@nodeweaver/engine';
 import { useSettingsStore } from '@/lib/settings';
 import { NARRATOR_DEFAULT } from '@/store/story';
+import { TTSPlayer } from '@/lib/tts-player';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ interface MomentDraft {
 }
 
 type Phase = 'spark' | 'premise' | 'worldcast' | 'architecture' | 'planting';
+type WorldcastTab = 'world' | 'cast';
 
 // ── Genre list ────────────────────────────────────────────────────────────────
 
@@ -80,7 +82,7 @@ function layoutNodes(nodes: NWVNode[]): NWVNode[] {
     if (!byLevel.has(level)) byLevel.set(level, []);
     byLevel.get(level)!.push(id);
   }
-  const NODE_W = 340, NODE_H = 230;
+  const NODE_W = 480, NODE_H = 320;
   return nodes.map((n) => {
     const level = levels.get(n.id) ?? 0;
     const siblings = byLevel.get(level) ?? [n.id];
@@ -123,6 +125,18 @@ function PhaseSteps({ current }: { current: Phase }) {
   );
 }
 
+// ── Flat sprout icon ──────────────────────────────────────────────────────────
+
+function SeedIcon({ size = 16, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <line x1="7" y1="13" x2="7" y2="7" />
+      <path d="M7 10C5 8 3 8 3 5C5 5 7 7 7 10" />
+      <path d="M7 10C9 8 11 8 11 5C9 5 7 7 7 10" />
+    </svg>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
@@ -144,15 +158,23 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
   const [sparkLoading, setSparkLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Phase 2 — Premise
-  const [premiseOptions, setPremiseOptions] = useState<PremiseOption[]>([]);
+  // Phase 2 — Premise (stack-based expand)
+  // premiseStack[0] = original 3 options, premiseStack[N] = expanded sub-options
+  const [premiseStack, setPremiseStack] = useState<PremiseOption[][]>([]);
+  const [premiseAncestry, setPremiseAncestry] = useState<PremiseOption[]>([]); // selected options leading here
   const [selectedPremiseIdx, setSelectedPremiseIdx] = useState<number | null>(null);
   const [mashupMode, setMashupMode] = useState(false);
   const [mashupText, setMashupText] = useState('');
   const [premiseLoading, setPremiseLoading] = useState(false);
+  const [expandingIdx, setExpandingIdx] = useState<number | null>(null); // which option is being expanded
   const [premiseLocked, setPremiseLocked] = useState(false);
 
+  // Phase 2 — Narration
+  const narratePlayerRef = useRef<TTSPlayer | null>(null);
+  const [narratingIdx, setNarratingIdx] = useState<number | null>(null);
+
   // Phase 3 — World & Cast
+  const [worldcastTab, setWorldcastTab] = useState<WorldcastTab>('world');
   const [worldFacts, setWorldFacts] = useState<string[]>([]);
   const [seedCharacters, setSeedCharacters] = useState<SeedCharacter[]>([]);
   const [worldcastLoading, setWorldcastLoading] = useState(false);
@@ -165,12 +187,14 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
   // Shared
   const [error, setError] = useState<string | null>(null);
 
-  // ── Computed premise text ──────────────────────────────────────────────────
+  // ── Derived premise values ────────────────────────────────────────────────
+
+  const currentOptions = premiseStack[premiseStack.length - 1] ?? [];
 
   const lockedPremise = mashupMode
     ? mashupText
     : selectedPremiseIdx !== null
-    ? premiseOptions[selectedPremiseIdx]?.fullText ?? ''
+    ? currentOptions[selectedPremiseIdx]?.fullText ?? ''
     : '';
 
   // ── Phase 1: Spark ─────────────────────────────────────────────────────────
@@ -215,7 +239,8 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
   const fetchPremiseOptions = useCallback(async () => {
     setError(null);
     setPremiseLoading(true);
-    setPremiseOptions([]);
+    setPremiseStack([]);
+    setPremiseAncestry([]);
     setSelectedPremiseIdx(null);
     setPremiseLocked(false);
     setMashupMode(false);
@@ -231,7 +256,7 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
       });
       const data = await res.json() as { options?: PremiseOption[]; error?: string };
       if (data.error || !data.options) throw new Error(data.error ?? 'No options returned');
-      setPremiseOptions(data.options.slice(0, 3));
+      setPremiseStack([data.options.slice(0, 3)]);
     } catch (err) {
       if (err instanceof Error) setError(err.message);
       else setError('Failed to generate premise options.');
@@ -240,6 +265,62 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
     }
   }, [sparkText, genre, sparkReflection, anthropicKey]);
 
+  const handleExpandOption = useCallback(async (opt: PremiseOption, idx: number) => {
+    setExpandingIdx(idx);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'seed-premise-expand', prompt: '', anthropicKey,
+          context: { genre, parentPremise: opt.fullText },
+        }),
+      });
+      const data = await res.json() as { options?: PremiseOption[]; error?: string };
+      if (data.error || !data.options) throw new Error(data.error ?? 'No options returned');
+      setPremiseStack((prev) => [...prev, data.options!.slice(0, 3)]);
+      setPremiseAncestry((prev) => [...prev, opt]);
+      setSelectedPremiseIdx(null);
+      setMashupMode(false);
+    } catch (err) {
+      if (err instanceof Error) setError(err.message);
+      else setError('Failed to expand premise.');
+    } finally {
+      setExpandingIdx(null);
+    }
+  }, [genre, anthropicKey]);
+
+  const handlePremiseBack = useCallback(() => {
+    if (premiseStack.length <= 1) return;
+    setPremiseStack((prev) => prev.slice(0, -1));
+    setPremiseAncestry((prev) => prev.slice(0, -1));
+    setSelectedPremiseIdx(null);
+    setMashupMode(false);
+  }, [premiseStack.length]);
+
+  // ── Phase 2: Narration ─────────────────────────────────────────────────────
+
+  const handleNarrate = useCallback(async (text: string, idx: number) => {
+    // Stop any playing narration
+    if (narratePlayerRef.current) {
+      narratePlayerRef.current.stop();
+      narratePlayerRef.current = null;
+      if (narratingIdx === idx) { setNarratingIdx(null); return; }
+    }
+    setNarratingIdx(idx);
+    const player = new TTSPlayer();
+    narratePlayerRef.current = player;
+    try {
+      await player.playLine(text, NARRATOR_DEFAULT);
+    } catch {
+      // ignore — playLine returns false on abort/error
+    } finally {
+      narratePlayerRef.current = null;
+      setNarratingIdx(null);
+    }
+  }, [narratingIdx]);
+
   // ── Phase 3: World & Cast ──────────────────────────────────────────────────
 
   const fetchWorldcast = useCallback(async (premise: string) => {
@@ -247,6 +328,7 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
     setWorldcastLoading(true);
     setWorldFacts([]);
     setSeedCharacters([]);
+    setWorldcastTab('world');
     try {
       const res = await fetch('/api/ai/generate', {
         method: 'POST',
@@ -310,6 +392,9 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
 
   const lockPremiseAndContinue = useCallback(() => {
     if (!lockedPremise.trim()) { setError('Select or write a premise first.'); return; }
+    // Stop any playing narration
+    if (narratePlayerRef.current) { narratePlayerRef.current.stop(); narratePlayerRef.current = null; }
+    setNarratingIdx(null);
     setPremiseLocked(true);
     setPhase('worldcast');
     fetchWorldcast(lockedPremise);
@@ -368,7 +453,6 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
     // Jaw-drop moment nodes (twist type)
     for (const moment of moments) {
       const id = nanoid();
-      // Find which act index this moment belongs to
       const posToActIdx = { early: 0, middle: Math.floor(actIds.length / 2), late: actIds.length - 1 };
       const parentActIdx = posToActIdx[moment.position] ?? 0;
       const parentActId = actIds[parentActIdx];
@@ -387,7 +471,6 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
         isHighImpact: true,
       });
 
-      // Connect parent act → jaw-drop moment
       const parentNode = nodes.find((n) => n.id === parentActId);
       if (parentNode) {
         const choice: NWVChoice = { id: nanoid(), label: '⚡ ' + moment.title.slice(0, 30) };
@@ -405,10 +488,8 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
       actNode.choices.push({ id: nanoid(), label: 'Continue', next: actIds[i + 1] });
     }
 
-    // Layout nodes
     const laidOut = layoutNodes(nodes);
 
-    // Characters → NWVCharacter[]
     const characters: NWVCharacter[] = [NARRATOR_DEFAULT];
     for (const sc of seedCharacters) {
       characters.push({
@@ -421,7 +502,6 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
       });
     }
 
-    // Blueprint
     const seedBlueprint: SeedBlueprint = {
       premise: lockedPremise,
       worldFacts,
@@ -476,16 +556,34 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
     );
   }
 
+  function PlayIcon({ playing }: { playing: boolean }) {
+    if (playing) {
+      return (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+          <rect x="1" y="1" width="3" height="8" rx="0.5" />
+          <rect x="6" y="1" width="3" height="8" rx="0.5" />
+        </svg>
+      );
+    }
+    return (
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+        <path d="M2 1.5L9 5L2 8.5V1.5Z" />
+      </svg>
+    );
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="relative flex h-[90vh] w-full max-w-2xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div className="relative flex h-[90vh] w-full max-w-4xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
 
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <div className="flex items-center gap-3">
-            <span className="text-lg">🌱</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+              <SeedIcon size={16} />
+            </div>
             <div>
               <h2 className="text-base font-semibold text-slate-900">Seed AI</h2>
               <p className="text-[11px] text-slate-400">Grow a story from a single idea</p>
@@ -516,7 +614,9 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
         {/* Planting state */}
         {phase === 'planting' && (
           <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-            <div className="text-4xl">🌱</div>
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
+              <SeedIcon size={28} />
+            </div>
             <p className="text-slate-600 font-medium">Planting your story…</p>
             <p className="text-sm text-slate-400">Growing nodes from the blueprint</p>
           </div>
@@ -577,9 +677,32 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
         {/* Phase 2 — Premise */}
         {phase === 'premise' && (
           <div className="flex flex-1 flex-col overflow-y-auto px-6 py-5 gap-4">
+
+            {/* Breadcrumb when drilling down */}
+            {premiseAncestry.length > 0 && (
+              <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                <button
+                  onClick={handlePremiseBack}
+                  className="text-xs text-emerald-600 hover:text-emerald-800 font-medium"
+                >
+                  ← Back
+                </button>
+                <span className="text-slate-300 text-xs">|</span>
+                <span className="text-xs text-slate-500 truncate">
+                  Expanding: <em className="text-slate-700">{premiseAncestry[premiseAncestry.length - 1].fullText}</em>
+                </span>
+              </div>
+            )}
+
             <div>
-              <h3 className="mb-1 text-sm font-semibold text-slate-700">Choose your premise</h3>
-              <p className="text-xs text-slate-400">Three dramatically distinct directions. Pick one, or write a mashup.</p>
+              <h3 className="mb-1 text-sm font-semibold text-slate-700">
+                {premiseAncestry.length > 0 ? 'Expanded options' : 'Choose your premise'}
+              </h3>
+              <p className="text-xs text-slate-400">
+                {premiseAncestry.length > 0
+                  ? 'Three variations of the selected premise. Pick one, expand further, or go back.'
+                  : 'Three dramatically distinct directions. Pick one, expand, or write a mashup.'}
+              </p>
             </div>
 
             {premiseLoading && (
@@ -588,28 +711,79 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
               </div>
             )}
 
-            {!premiseLoading && premiseOptions.map((opt, i) => (
-              <button
+            {!premiseLoading && currentOptions.map((opt, i) => (
+              <div
                 key={i}
-                onClick={() => { if (!premiseLocked) { setSelectedPremiseIdx(i); setMashupMode(false); } }}
-                disabled={premiseLocked}
-                className={`w-full rounded-xl border p-4 text-left transition ${
+                className={`relative rounded-xl border p-4 transition ${
                   selectedPremiseIdx === i && !mashupMode
                     ? 'border-emerald-400 bg-emerald-50'
-                    : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                } ${premiseLocked ? 'opacity-70 cursor-default' : ''}`}
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                } ${premiseLocked ? 'opacity-70' : ''}`}
               >
-                <p className="text-xs text-slate-400 mb-1 uppercase tracking-wide font-medium">Option {i + 1}</p>
-                <p className="text-sm text-slate-800">{opt.fullText}</p>
-                <div className="mt-2 flex gap-4 text-[10px] text-slate-400">
+                {/* Top-right actions */}
+                {!premiseLocked && (
+                  <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                    {/* Narrate button */}
+                    <button
+                      onClick={() => handleNarrate(opt.fullText, i)}
+                      title="Narrate this premise"
+                      className={`flex items-center justify-center rounded-md px-2 py-1 text-[10px] font-medium transition gap-1 ${
+                        narratingIdx === i
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-slate-100 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600'
+                      }`}
+                    >
+                      <PlayIcon playing={narratingIdx === i} />
+                    </button>
+                    {/* Expand button */}
+                    <button
+                      onClick={() => handleExpandOption(opt, i)}
+                      disabled={expandingIdx !== null}
+                      title="Expand this premise into variations"
+                      className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium bg-slate-100 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600 disabled:opacity-40 transition"
+                    >
+                      {expandingIdx === i ? <Spinner /> : (
+                        <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                          <path d="M5 1v8M1 5h8" />
+                        </svg>
+                      )}
+                      Expand
+                    </button>
+                  </div>
+                )}
+
+                {/* Option content — click to select, textarea to edit */}
+                <div
+                  className="block w-full pr-24 cursor-pointer"
+                  onClick={() => { if (!premiseLocked) { setSelectedPremiseIdx(i); setMashupMode(false); } }}
+                >
+                  <p className="text-xs text-slate-400 mb-1 uppercase tracking-wide font-medium">Option {i + 1}</p>
+                </div>
+                <textarea
+                  className={`w-full resize-none rounded-lg border px-2 py-1.5 text-sm text-slate-800 focus:outline-none mb-2 pr-24 ${
+                    selectedPremiseIdx === i && !mashupMode
+                      ? 'border-emerald-300 bg-emerald-50/50 focus:border-emerald-400'
+                      : 'border-slate-100 bg-transparent focus:border-slate-300'
+                  }`}
+                  rows={4}
+                  value={opt.fullText}
+                  disabled={premiseLocked}
+                  onClick={(e) => { e.stopPropagation(); if (!premiseLocked) { setSelectedPremiseIdx(i); setMashupMode(false); } }}
+                  onChange={(e) => {
+                    const updated = [...currentOptions];
+                    updated[i] = { ...updated[i], fullText: e.target.value };
+                    setPremiseStack((prev) => [...prev.slice(0, -1), updated]);
+                  }}
+                />
+                <div className="flex gap-4 text-[10px] text-slate-400">
                   <span><strong>Who:</strong> {opt.who}</span>
                   <span><strong>Wants:</strong> {opt.wants}</span>
                   <span><strong>But:</strong> {opt.but}</span>
                 </div>
-              </button>
+              </div>
             ))}
 
-            {!premiseLoading && premiseOptions.length > 0 && !premiseLocked && (
+            {!premiseLoading && currentOptions.length > 0 && !premiseLocked && (
               <div>
                 <button
                   onClick={() => { setMashupMode(!mashupMode); setSelectedPremiseIdx(null); }}
@@ -630,7 +804,7 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
               </div>
             )}
 
-            {!premiseLoading && premiseOptions.length > 0 && !premiseLocked && (
+            {!premiseLoading && currentOptions.length > 0 && !premiseLocked && premiseAncestry.length === 0 && (
               <button
                 onClick={fetchPremiseOptions}
                 className="self-start text-xs text-slate-400 underline hover:text-slate-600"
@@ -648,101 +822,166 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
           </div>
         )}
 
-        {/* Phase 3 — World & Cast */}
+        {/* Phase 3 — World & Cast (tabbed) */}
         {phase === 'worldcast' && (
-          <div className="flex flex-1 overflow-hidden">
-            {/* World facts column */}
-            <div className="flex flex-1 flex-col overflow-y-auto border-r border-slate-100 px-5 py-5 gap-3">
-              <h3 className="text-sm font-semibold text-slate-700">World Facts</h3>
-              {worldcastLoading && (
-                <div className="flex items-center gap-2 text-xs text-slate-400">
-                  <Spinner /> Building the world…
-                </div>
-              )}
-              {!worldcastLoading && worldFacts.map((fact, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
-                  <textarea
-                    className="flex-1 resize-none rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-700 focus:border-emerald-400 focus:outline-none"
-                    rows={2}
-                    value={fact}
-                    onChange={(e) => {
-                      const updated = [...worldFacts];
-                      updated[i] = e.target.value;
-                      setWorldFacts(updated);
-                    }}
-                  />
-                  <button
-                    onClick={() => setWorldFacts(worldFacts.filter((_, j) => j !== i))}
-                    className="mt-1.5 text-slate-300 hover:text-red-400 text-xs"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-              {!worldcastLoading && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            {/* Tab bar */}
+            <div className="flex border-b border-slate-100 px-6 pt-4 gap-0">
+              {(['world', 'cast'] as WorldcastTab[]).map((tab) => (
                 <button
-                  onClick={() => setWorldFacts([...worldFacts, ''])}
-                  className="self-start text-[11px] text-emerald-600 hover:text-emerald-800 underline"
+                  key={tab}
+                  onClick={() => setWorldcastTab(tab)}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition -mb-px ${
+                    worldcastTab === tab
+                      ? 'border-emerald-500 text-emerald-700'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
                 >
-                  + Add fact
+                  {tab === 'world' ? 'World' : 'Cast'}
+                  {tab === 'cast' && seedCharacters.length > 0 && (
+                    <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                      {seedCharacters.length}
+                    </span>
+                  )}
                 </button>
-              )}
+              ))}
             </div>
 
-            {/* Characters column */}
-            <div className="flex flex-1 flex-col overflow-y-auto px-5 py-5 gap-3">
-              <h3 className="text-sm font-semibold text-slate-700">Characters</h3>
-              {worldcastLoading && (
-                <div className="flex items-center gap-2 text-xs text-slate-400">
-                  <Spinner /> Assembling the cast…
-                </div>
-              )}
-              {!worldcastLoading && seedCharacters.map((char, i) => (
-                <div key={i} className="rounded-xl border border-slate-200 p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <input
-                      className="flex-1 border-b border-slate-200 bg-transparent text-sm font-semibold text-slate-800 placeholder-slate-300 focus:border-emerald-400 focus:outline-none"
-                      placeholder="Name"
-                      value={char.name}
+            {/* World tab */}
+            {worldcastTab === 'world' && (
+              <div className="flex flex-1 flex-col overflow-y-auto px-6 py-5 gap-3">
+                <p className="text-xs text-slate-400">Specific, concrete truths about this world — rules, textures, what people fear.</p>
+                {worldcastLoading && (
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <Spinner /> Building the world…
+                  </div>
+                )}
+                {!worldcastLoading && worldFacts.map((fact, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="mt-3 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                    <textarea
+                      className="flex-1 resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-emerald-400 focus:outline-none"
+                      rows={2}
+                      value={fact}
                       onChange={(e) => {
-                        const u = [...seedCharacters];
-                        u[i] = { ...u[i], name: e.target.value };
-                        setSeedCharacters(u);
+                        const updated = [...worldFacts];
+                        updated[i] = e.target.value;
+                        setWorldFacts(updated);
                       }}
                     />
                     <button
-                      onClick={() => setSeedCharacters(seedCharacters.filter((_, j) => j !== i))}
-                      className="ml-2 text-slate-300 hover:text-red-400 text-xs"
+                      onClick={() => setWorldFacts(worldFacts.filter((_, j) => j !== i))}
+                      className="mt-2 text-slate-300 hover:text-red-400 text-xs"
                     >
                       ✕
                     </button>
                   </div>
-                  {(['role', 'wound', 'want'] as const).map((field) => (
-                    <div key={field}>
-                      <label className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{field}</label>
-                      <input
-                        className="w-full border-b border-slate-100 bg-transparent text-xs text-slate-700 placeholder-slate-300 focus:border-emerald-400 focus:outline-none"
-                        value={char[field]}
-                        onChange={(e) => {
-                          const u = [...seedCharacters];
-                          u[i] = { ...u[i], [field]: e.target.value };
-                          setSeedCharacters(u);
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              ))}
-              {!worldcastLoading && (
-                <button
-                  onClick={() => setSeedCharacters([...seedCharacters, { name: '', role: '', wound: '', want: '' }])}
-                  className="self-start text-[11px] text-emerald-600 hover:text-emerald-800 underline"
-                >
-                  + Add character
-                </button>
-              )}
-            </div>
+                ))}
+                {!worldcastLoading && (
+                  <button
+                    onClick={() => setWorldFacts([...worldFacts, ''])}
+                    className="self-start text-[11px] text-emerald-600 hover:text-emerald-800 underline"
+                  >
+                    + Add fact
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Cast tab */}
+            {worldcastTab === 'cast' && (
+              <div className="flex flex-1 flex-col overflow-y-auto px-6 py-5 gap-4">
+                <p className="text-xs text-slate-400">The characters who will drive your story — their wounds and wants create dramatic tension.</p>
+                {worldcastLoading && (
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <Spinner /> Assembling the cast…
+                  </div>
+                )}
+                {!worldcastLoading && (
+                  <div className="grid grid-cols-2 gap-3">
+                    {seedCharacters.map((char, i) => (
+                      <div key={i} className="rounded-xl border border-slate-200 bg-white overflow-hidden flex flex-col">
+                        {/* Header row — avatar initial + name + delete */}
+                        <div className="flex items-center gap-2 px-3 py-3 border-b border-slate-100">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-sm font-bold shrink-0">
+                            {char.name ? char.name[0].toUpperCase() : '?'}
+                          </div>
+                          <input
+                            className="flex-1 min-w-0 bg-transparent text-sm font-semibold text-slate-900 placeholder-slate-300 focus:outline-none"
+                            placeholder="Name…"
+                            value={char.name}
+                            onChange={(e) => {
+                              const u = [...seedCharacters];
+                              u[i] = { ...u[i], name: e.target.value };
+                              setSeedCharacters(u);
+                            }}
+                          />
+                          <button
+                            onClick={() => setSeedCharacters(seedCharacters.filter((_, j) => j !== i))}
+                            className="text-slate-300 hover:text-red-400 text-xs shrink-0"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {/* Role */}
+                        <div className="px-3 py-2 border-b border-slate-100">
+                          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Role</label>
+                          <textarea
+                            className="w-full resize-none rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs leading-relaxed text-slate-800 placeholder-slate-300 focus:border-emerald-400 focus:outline-none"
+                            rows={3}
+                            placeholder="Who are they and what haunts them…"
+                            value={char.role}
+                            onChange={(e) => {
+                              const u = [...seedCharacters];
+                              u[i] = { ...u[i], role: e.target.value };
+                              setSeedCharacters(u);
+                            }}
+                          />
+                        </div>
+                        {/* Wound */}
+                        <div className="px-3 py-2 border-b border-slate-100">
+                          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Wound</label>
+                          <textarea
+                            className="w-full resize-none rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs leading-relaxed text-slate-800 placeholder-slate-300 focus:border-emerald-400 focus:outline-none"
+                            rows={2}
+                            placeholder="Core damage or flaw…"
+                            value={char.wound}
+                            onChange={(e) => {
+                              const u = [...seedCharacters];
+                              u[i] = { ...u[i], wound: e.target.value };
+                              setSeedCharacters(u);
+                            }}
+                          />
+                        </div>
+                        {/* Want */}
+                        <div className="px-3 py-2">
+                          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Want</label>
+                          <textarea
+                            className="w-full resize-none rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs leading-relaxed text-slate-800 placeholder-slate-300 focus:border-emerald-400 focus:outline-none"
+                            rows={2}
+                            placeholder="What they are pursuing…"
+                            value={char.want}
+                            onChange={(e) => {
+                              const u = [...seedCharacters];
+                              u[i] = { ...u[i], want: e.target.value };
+                              setSeedCharacters(u);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {!worldcastLoading && (
+                  <button
+                    onClick={() => setSeedCharacters([...seedCharacters, { name: '', role: '', wound: '', want: '' }])}
+                    className="self-start text-[11px] text-emerald-600 hover:text-emerald-800 underline"
+                  >
+                    + Add character
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -750,15 +989,18 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
         {phase === 'architecture' && (
           <div className="flex flex-1 overflow-hidden">
             {/* Acts column */}
-            <div className="flex flex-1 flex-col overflow-y-auto border-r border-slate-100 px-5 py-5 gap-3">
-              <h3 className="text-sm font-semibold text-slate-700">Act Structure</h3>
+            <div className="flex flex-1 flex-col overflow-y-auto border-r border-slate-100 px-6 py-5 gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-700">Act Structure</h3>
+                <p className="text-xs text-slate-400 mt-0.5">The dramatic phases of your story. Edit labels and emotional beats.</p>
+              </div>
               {archLoading && (
                 <div className="flex items-center gap-2 text-xs text-slate-400">
                   <Spinner /> Laying out the acts…
                 </div>
               )}
               {!archLoading && acts.map((act, i) => (
-                <div key={i} className="rounded-xl border border-slate-200 p-3 space-y-2">
+                <div key={i} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Act {i + 1}</span>
                     <button
@@ -769,7 +1011,7 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
                     </button>
                   </div>
                   <input
-                    className="w-full border-b border-slate-200 bg-transparent text-sm font-semibold text-slate-800 focus:border-emerald-400 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 focus:border-emerald-400 focus:outline-none"
                     placeholder="Act label"
                     value={act.label}
                     onChange={(e) => {
@@ -779,7 +1021,7 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
                     }}
                   />
                   <input
-                    className="w-full bg-transparent text-xs text-slate-500 italic focus:outline-none"
+                    className="w-full rounded-lg border border-slate-100 bg-white px-3 py-1.5 text-xs text-slate-500 italic focus:border-emerald-400 focus:outline-none"
                     placeholder="Emotional beat"
                     value={act.emotionalBeat}
                     onChange={(e) => {
@@ -801,15 +1043,18 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
             </div>
 
             {/* Jaw-drop moments column */}
-            <div className="flex flex-1 flex-col overflow-y-auto px-5 py-5 gap-3">
-              <h3 className="text-sm font-semibold text-slate-700">Jaw-Drop Moments</h3>
+            <div className="flex flex-1 flex-col overflow-y-auto px-6 py-5 gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-700">Jaw-Drop Moments</h3>
+                <p className="text-xs text-slate-400 mt-0.5">The surprises and revelations that will move your reader.</p>
+              </div>
               {archLoading && (
                 <div className="flex items-center gap-2 text-xs text-slate-400">
                   <Spinner /> Planting surprises…
                 </div>
               )}
               {!archLoading && moments.map((moment, i) => (
-                <div key={i} className="rounded-xl border border-amber-100 bg-amber-50/50 p-3 space-y-2">
+                <div key={i} className="rounded-xl border border-amber-100 bg-amber-50/50 p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <span className="text-amber-500 text-sm">⚡</span>
                     <button
@@ -836,7 +1081,7 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
                     </button>
                   </div>
                   <input
-                    className="w-full border-b border-amber-200 bg-transparent text-sm font-semibold text-slate-800 focus:border-amber-400 focus:outline-none"
+                    className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 focus:border-amber-400 focus:outline-none"
                     placeholder="Moment title"
                     value={moment.title}
                     onChange={(e) => {
@@ -846,7 +1091,7 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
                     }}
                   />
                   <textarea
-                    className="w-full resize-none bg-transparent text-xs text-slate-600 focus:outline-none"
+                    className="w-full resize-none rounded-lg border border-amber-100 bg-white px-3 py-2 text-xs text-slate-600 focus:border-amber-300 focus:outline-none"
                     rows={2}
                     placeholder="What happens here?"
                     value={moment.description}
@@ -956,7 +1201,8 @@ export function SeedAIModal({ onClose, onStoriesChanged }: Props) {
                     disabled={archLoading || acts.length === 0}
                     className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50 transition"
                   >
-                    🌱 Plant Story
+                    <SeedIcon size={13} />
+                    Plant Story
                   </button>
                 </>
               )}

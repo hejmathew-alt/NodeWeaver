@@ -1,7 +1,7 @@
 /**
  * Voice command execution — fetches intent from Claude and maps to store actions.
  */
-import type { NWVStory } from '@nodeweaver/engine';
+import type { NWVStory, NodeType } from '@nodeweaver/engine';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -18,7 +18,7 @@ export interface CommandExecutorDeps {
   addCharacterNamed: (name: string) => string;
   setSelectedPanel: (panel: 'settings' | null) => void;
   setActiveView: (view: 'canvas' | 'characters' | 'encounters') => void;
-  createNode: (type: string) => void;
+  createNode: (type: NodeType) => void;
   saveToLinkedFile: () => Promise<unknown>;
   setCanvasPlayNodeId: (id: string | null) => void;
   undoDeleteNode: () => void;
@@ -87,7 +87,7 @@ export function executeCommand(
       return humanResponse;
     }
     case 'new-node': {
-      const type = (params.type as string) || 'story';
+      const type = ((params.type as string) || 'story') as NodeType;
       createNode(type);
       return humanResponse;
     }

@@ -44,9 +44,9 @@ export function EndNode({ id, data }: NodeProps) {
       className={`flex w-full h-full flex-col rounded-lg bg-white p-2 ${CANVAS_TEXT_CLASS[canvasTextSize]} shadow-md transition-all`}
       style={{
         border: '1px solid #e2e8f0',
-        boxShadow: 'inset 4px 0 0 #f97316',
-        outline: isSelected ? '2px solid #f97316' : 'none',
-        outlineOffset: '2px',
+        boxShadow: isSelected
+          ? 'inset 4px 0 0 #f97316, 0 0 20px 6px #f9731644'
+          : 'inset 4px 0 0 #f97316',
         opacity: isOrphaned ? 0.45 : 1,
       }}
     >

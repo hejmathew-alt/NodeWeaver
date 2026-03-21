@@ -23,10 +23,10 @@ interface CanvasToolbarProps {
   onToggleWorld?: () => void;
   avfxMode?: boolean;
   onToggleAVFX?: () => void;
-  onSeedAI?: () => void;
+  onSeed?: () => void;
 }
 
-export function CanvasToolbar({ flowMode = false, onFlowMode, worldPanelOpen = false, onToggleWorld, avfxMode = false, onToggleAVFX, onSeedAI }: CanvasToolbarProps) {
+export function CanvasToolbar({ flowMode = false, onFlowMode, worldPanelOpen = false, onToggleWorld, avfxMode = false, onToggleAVFX, onSeed }: CanvasToolbarProps) {
   const createNode = useStoryStore((s) => s.createNode);
   const activeView = useStoryStore((s) => s.activeView);
   const setActiveView = useStoryStore((s) => s.setActiveView);
@@ -76,14 +76,15 @@ export function CanvasToolbar({ flowMode = false, onFlowMode, worldPanelOpen = f
         </button>
       )}
 
-      {onSeedAI && (
+      {onSeed && (
         <button
-          onClick={onSeedAI}
+          onClick={onSeed}
           className="flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-emerald-50"
           style={{ color: '#059669', border: '1px solid #05966955' }}
-          title="Seed AI — grow a story from a single idea"
+          title="Seed — grow a story from a single idea"
         >
-          🌱 Seed AI
+          <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="13" x2="7" y2="7"/><path d="M7 10C5 8 3 8 3 5C5 5 7 7 7 10"/><path d="M7 10C9 8 11 8 11 5C9 5 7 7 7 10"/></svg>
+          Seed
         </button>
       )}
 

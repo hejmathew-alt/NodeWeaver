@@ -24,8 +24,12 @@ export function autoLayout(nodes: Node[], edges: Edge[]): Node[] {
     g.setNode(node.id, { width: w, height: h });
   }
 
+  // Track which nodes have at least one edge so we can detect orphans later
+  const connectedIds = new Set<string>();
   for (const edge of edges) {
     g.setEdge(edge.source, edge.target);
+    connectedIds.add(edge.source);
+    connectedIds.add(edge.target);
   }
 
   dagre.layout(g);
@@ -41,15 +45,42 @@ export function autoLayout(nodes: Node[], edges: Edge[]): Node[] {
   if (spineNodeIds.size > 0) {
     const spineYs = [...spineNodeIds]
       .map((id) => g.node(id)?.y ?? 0)
+      .filter(isFinite)
       .sort((a, b) => a - b);
-    // Use median to resist outliers
-    centerY = spineYs[Math.floor(spineYs.length / 2)];
+    centerY = spineYs[Math.floor(spineYs.length / 2)] ?? 0;
   }
+
+  // Find the bottom of the connected graph so we can park orphan nodes below it
+  const connectedMaxY = nodes
+    .filter((n) => connectedIds.has(n.id))
+    .map((n) => {
+      const pos = g.node(n.id);
+      const h = (n.style?.height as number | undefined) ?? 120;
+      return pos && isFinite(pos.y) ? pos.y + h / 2 : 0;
+    })
+    .reduce((a, b) => Math.max(a, b), 0);
+
+  const orphanBaseY = connectedMaxY + 200;
+  let orphanX = 80;
 
   return nodes.map((node) => {
     const pos = g.node(node.id);
     const w = (node.style?.width as number | undefined) ?? 240;
     const h = (node.style?.height as number | undefined) ?? 120;
+
+    // Disconnected nodes (no edges) — Dagre may cluster them at the same position.
+    // Place them in a dedicated row below the main graph instead.
+    if (!connectedIds.has(node.id)) {
+      const x = orphanX;
+      orphanX += w + GAP_X;
+      return { ...node, position: { x, y: orphanBaseY } };
+    }
+
+    // Guard against any Dagre positioning failure for connected nodes
+    if (!pos || !isFinite(pos.x) || !isFinite(pos.y)) {
+      return node;
+    }
+
     const isSpine = spineNodeIds.size > 0 && spineNodeIds.has(node.id);
     return {
       ...node,

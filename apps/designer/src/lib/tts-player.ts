@@ -65,6 +65,14 @@ export class TTSPlayer {
     this._abort = { stop: false };
     const ctx = this.getCtx();
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    // Pre-warm the audio pipeline with a tiny silent buffer so the first real
+    // chunk doesn't hit a cold AudioContext (causes ~1s of garbled audio).
+    const silent = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.05), ctx.sampleRate);
+    const src = ctx.createBufferSource();
+    src.buffer = silent;
+    src.connect(this.masterGain!);
+    src.start();
+    this.scheduledEnd = ctx.currentTime + 0.05;
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────

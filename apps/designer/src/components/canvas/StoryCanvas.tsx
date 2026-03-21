@@ -55,7 +55,7 @@ import type { NWVBlock } from '@nodeweaver/engine';
 import { DragPreview } from './nodes/CanvasBlock';
 import { useStoryStore } from '@/store/story';
 import { useVoiceStore } from '@/store/voice';
-import { SeedAIModal } from '@/components/dashboard/SeedAIModal';
+import { SeedModal } from '@/components/dashboard/SeedModal';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ const edgeTypes = {
 interface StoryCanvasProps {
   story: NWVStory;
   onToggleAVFX?: () => void;
-  onSeedAI?: () => void;
+  onSeed?: () => void;
 }
 
 function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
@@ -140,15 +140,26 @@ function storyToFlow(story: NWVStory): { nodes: Node[]; edges: Edge[] } {
         // don't use the U-curve for them even though sourceX > targetX geometrically.
         const isLoopBack = depths.size > 0 && tgtDepth < srcDepth;
         const isSpineEdge = !isLoopBack && spineSet.has(node.id) && spineSet.has(choice.next);
+        const targetNode = story.nodes.find(n => n.id === choice.next);
+        const isPlanned = targetNode?.isHighImpact === true;
+
+        // Planned (jaw-drop) edges keep their explicit handles (bottom→top);
+        // all other edges migrate to the default right→target-left handles.
+        const srcHandle = isPlanned && choice.sourceHandle
+          ? choice.sourceHandle
+          : (!choice.sourceHandle || choice.sourceHandle === 'bottom' || choice.sourceHandle === 'left') ? 'right' : choice.sourceHandle;
+        const tgtHandle = isPlanned && choice.targetHandle
+          ? choice.targetHandle
+          : (!choice.targetHandle || choice.targetHandle === 'top' || choice.targetHandle === 'target-right') ? 'target-left' : choice.targetHandle;
+
         edges.push({
           id: `${node.id}-${choice.id}`,
           type: 'choice',
           source: node.id,
           target: choice.next,
-          // Migrate handle IDs: bottom/left/null→right, top/target-right/null→target-left
-          sourceHandle: (!choice.sourceHandle || choice.sourceHandle === 'bottom' || choice.sourceHandle === 'left') ? 'right' : choice.sourceHandle,
-          targetHandle: (!choice.targetHandle || choice.targetHandle === 'top' || choice.targetHandle === 'target-right') ? 'target-left' : choice.targetHandle,
-          data: { sourceId: node.id, choiceId: choice.id, label: choice.label, _isSpineEdge: isSpineEdge, _isLoopBack: isLoopBack },
+          sourceHandle: srcHandle,
+          targetHandle: tgtHandle,
+          data: { sourceId: node.id, choiceId: choice.id, label: choice.label, _isSpineEdge: isSpineEdge, _isLoopBack: isLoopBack, _isPlanned: isPlanned },
         });
       }
     }
@@ -355,15 +366,15 @@ interface InnerProps {
   worldPanelOpen: boolean;
   onToggleWorld: () => void;
   onToggleAVFX?: () => void;
-  onSeedAI?: () => void;
+  onSeed?: () => void;
 }
 
-function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onResizeStart, flowMode, onFlowMode, worldPanelOpen, onToggleWorld, onToggleAVFX, onSeedAI }: InnerProps) {
+function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onResizeStart, flowMode, onFlowMode, worldPanelOpen, onToggleWorld, onToggleAVFX, onSeed }: InnerProps) {
   const selectedNodeId = useStoryStore((s) => s.selectedNodeId);
   const selectedPanel = useStoryStore((s) => s.selectedPanel);
   const setSelectedNode = useStoryStore((s) => s.setSelectedNode);
   const deleteNode = useStoryStore((s) => s.deleteNode);
-  const undoDeleteNode = useStoryStore((s) => s.undoDeleteNode);
+  const undoCanvas = useStoryStore((s) => s.undoCanvas);
   const connectNodes = useStoryStore((s) => s.connectNodes);
   const batchUpdatePositions = useStoryStore((s) => s.batchUpdatePositions);
   const avfxMode = useStoryStore((s) => s.avfxMode);
@@ -390,6 +401,14 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
     const h = (rfNode.measured?.height as number | undefined) ?? 150;
     const { zoom } = getViewport();
     setCenter(rfNode.position.x + w / 2, rfNode.position.y + h / 2, { duration: 650, zoom });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasPlayNodeId]);
+
+  // Sync node editor panel to follow canvas playback
+  useEffect(() => {
+    if (canvasPlayNodeId && selectedNodeId) {
+      setSelectedNode(canvasPlayNodeId);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasPlayNodeId]);
 
@@ -434,11 +453,11 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
       const tag = target.tagName;
       const inText = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
 
-      // Cmd+Z / Ctrl+Z — undo last node deletion
+      // Cmd+Z / Ctrl+Z — undo last canvas structural change
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
         if (!inText) {
           e.preventDefault();
-          undoDeleteNode();
+          undoCanvas();
           return;
         }
       }
@@ -451,7 +470,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedNodeId, deleteNode, undoDeleteNode]);
+  }, [selectedNodeId, deleteNode, undoCanvas]);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
@@ -590,13 +609,15 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
   );
 
   const onPaneClick = useCallback(() => {
+    // Don't disturb playback — CanvasPlayer HUD must only be dismissed via its own stop button
+    if (canvasPlayNodeId) return;
     setSelectedNode(null);
     // Clear the node picker if it has been open for more than 200ms
     // (the immediate paneClick after onConnectEnd is ignored by the time check)
     if (pendingConn && Date.now() - pendingConnSetAtRef.current > 200) {
       setPendingConn(null);
     }
-  }, [setSelectedNode, pendingConn]);
+  }, [canvasPlayNodeId, setSelectedNode, pendingConn]);
 
   // ── Block drag & drop ────────────────────────────────────────────────────────
 
@@ -679,7 +700,7 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
 
   return (
     <div className="flex h-full w-full flex-col">
-      <CanvasToolbar flowMode={flowMode} onFlowMode={onFlowMode} worldPanelOpen={worldPanelOpen} onToggleWorld={onToggleWorld} avfxMode={avfxMode} onToggleAVFX={onToggleAVFX} onSeedAI={onSeedAI} />
+      <CanvasToolbar flowMode={flowMode} onFlowMode={onFlowMode} worldPanelOpen={worldPanelOpen} onToggleWorld={onToggleWorld} avfxMode={avfxMode} onToggleAVFX={onToggleAVFX} onSeed={onSeed} />
       <DndContext
         sensors={dndSensors}
         collisionDetection={pointerWithin}
@@ -818,12 +839,12 @@ function StoryFlowInner({ story, panelWidth, panelExpanded, onToggleExpand, onRe
 
 // ── Main export (wraps in ReactFlowProvider so inner can use useReactFlow) ────
 
-export function StoryCanvas({ story, onToggleAVFX, onSeedAI }: StoryCanvasProps) {
+export function StoryCanvas({ story, onToggleAVFX, onSeed }: StoryCanvasProps) {
   const [panelWidth, setPanelWidth]       = useState(PANEL_MAX);
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [flowMode, setFlowMode]           = useState(false);
   const [worldPanelOpen, setWorldPanelOpen] = useState(false);
-  const [showSeedAI, setShowSeedAI] = useState(false);
+  const [showSeed, setShowSeed] = useState(false);
 
   // Reset to max width whenever the node editor panel opens (closed → open)
   // but not when simply switching from one node to another.
@@ -884,11 +905,11 @@ export function StoryCanvas({ story, onToggleAVFX, onSeedAI }: StoryCanvasProps)
           worldPanelOpen={worldPanelOpen}
           onToggleWorld={() => setWorldPanelOpen((v) => !v)}
           onToggleAVFX={onToggleAVFX}
-          onSeedAI={onSeedAI ?? (() => setShowSeedAI(true))}
+          onSeed={onSeed ?? (() => setShowSeed(true))}
         />
       </ReactFlowProvider>
-      {showSeedAI && (
-        <SeedAIModal onClose={() => setShowSeedAI(false)} />
+      {showSeed && (
+        <SeedModal onClose={() => setShowSeed(false)} />
       )}
     </>
   );

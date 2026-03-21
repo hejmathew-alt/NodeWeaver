@@ -16,8 +16,8 @@ import * as path from 'path';
 
 const QWEN_PORT   = 7862;
 const QWEN_URL    = `http://127.0.0.1:${QWEN_PORT}`;
-const QWEN_PYTHON = path.join(os.homedir(), 'Documents/NodeWeaver/servers/qwen_venv/bin/python');
-const QWEN_SCRIPT = path.join(os.homedir(), 'Documents/NodeWeaver/servers/qwen_server.py');
+const QWEN_PYTHON = path.join(os.homedir(), 'Documents/Claude Projects/NodeWeaver/servers/qwen_venv/bin/python');
+const QWEN_SCRIPT = path.join(os.homedir(), 'Documents/Claude Projects/NodeWeaver/servers/qwen_server.py');
 
 // ── Singleton state ──────────────────────────────────────────────────────────
 
@@ -56,7 +56,8 @@ function freePort(): Promise<void> {
   });
 }
 
-/** Spawn qwen_server.py; resolve when "Listening on" appears on stderr (socket bound). */
+/** Spawn qwen_server.py; resolve when "Listening on" appears on stderr (socket bound),
+ *  or when the HTTP health endpoint starts responding — whichever comes first. */
 async function spawnAndWait(): Promise<void> {
   if (!fs.existsSync(QWEN_PYTHON)) {
     throw new Error(`Qwen venv not found at ${QWEN_PYTHON}`);
@@ -72,15 +73,37 @@ async function spawnAndWait(): Promise<void> {
   return new Promise((resolve, reject) => {
     _proc = spawn(QWEN_PYTHON, [QWEN_SCRIPT, String(QWEN_PORT)], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', NODE_ENV: process.env.NODE_ENV ?? 'development' },
     });
 
-    const timeout = setTimeout(() => reject(new Error('Qwen startup timed out')), 120_000);
+    let resolved = false;
+    const done = () => { resolved = true; };
+
+    const timeout = setTimeout(() => {
+      if (!resolved) reject(new Error('Qwen startup timed out'));
+    }, 120_000);
+
+    // Poll HTTP health every 3 s — catches the case where the process crashes
+    // before printing "Listening on" but another Qwen instance is already up.
+    const poll = setInterval(async () => {
+      if (resolved) { clearInterval(poll); return; }
+      if (await isAlreadyUp()) {
+        clearInterval(poll);
+        clearTimeout(timeout);
+        done();
+        _ready = true;
+        console.log('[designer] Qwen TTS ready (health poll)');
+        resolve();
+      }
+    }, 3_000);
 
     _proc.stderr?.on('data', (chunk: Buffer) => {
       const msg = chunk.toString();
       process.stderr.write(msg);
-      if (msg.includes('Listening on')) {
+      if (!resolved && msg.includes('Listening on')) {
+        clearInterval(poll);
         clearTimeout(timeout);
+        done();
         _ready = true;
         console.log('[designer] Qwen TTS ready');
         resolve();
@@ -97,6 +120,7 @@ async function spawnAndWait(): Promise<void> {
     });
 
     _proc.on('error', (err) => {
+      clearInterval(poll);
       clearTimeout(timeout);
       reject(err);
     });

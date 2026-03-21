@@ -49,6 +49,7 @@ function CharacterCard({
   const [expanded, setExpanded] = useState(false);
   const [showPortraitEditor, setShowPortraitEditor] = useState(false);
   const [roleEditing, setRoleEditing] = useState(false);
+  const [backstoryEditing, setBackstoryEditing] = useState(false);
 
   // Avatar state
   const [avatarGenerating, setAvatarGenerating] = useState(false);
@@ -489,14 +490,25 @@ function CharacterCard({
       {/* Backstory */}
       <div className="border-t border-slate-100 px-5 py-3">
         <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Backstory</label>
-        <textarea
-          className={`w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-relaxed text-slate-800 focus:border-violet-400 focus:outline-none ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
-          rows={3}
-          value={character.backstory}
-          onChange={(e) => up({ backstory: e.target.value })}
-          placeholder="Character background and personality..."
-          disabled={isLocked}
-        />
+        {backstoryEditing && !isLocked ? (
+          <textarea
+            autoFocus
+            className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-relaxed text-slate-800 focus:border-violet-400 focus:outline-none"
+            rows={4}
+            value={character.backstory}
+            onChange={(e) => up({ backstory: e.target.value })}
+            onBlur={() => setBackstoryEditing(false)}
+            placeholder="Character background and personality..."
+          />
+        ) : (
+          <p
+            className={`text-sm leading-relaxed text-slate-800 line-clamp-2 ${!isLocked ? 'cursor-text' : ''}`}
+            onClick={() => !isLocked && setBackstoryEditing(true)}
+            title={character.backstory}
+          >
+            {character.backstory || <span className="text-slate-300">Character background and personality...</span>}
+          </p>
+        )}
       </div>
 
       {/* Voice summary row */}

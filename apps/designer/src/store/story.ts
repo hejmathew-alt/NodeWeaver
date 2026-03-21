@@ -92,7 +92,7 @@ interface StoryStore {
   updateNode: (nodeId: string, patch: Partial<NWVNode>) => Promise<void>;
   createNode: (type: NodeType, position?: { x: number; y: number }) => string;
   deleteNode: (nodeId: string) => void;
-  undoDeleteNode: () => void;
+  undoCanvas: () => void;
   updateNodePosition: (nodeId: string, x: number, y: number) => void;
   batchUpdatePositions: (positions: { id: string; x: number; y: number }[]) => void;
 
@@ -164,6 +164,7 @@ interface StoryStore {
   updateAct: (id: string, patch: Partial<ActColumn>) => void;
   deleteAct: (id: string) => void;
   reorderActs: (fromIndex: number, toIndex: number) => void;
+  resizeAct: (id: string, newWorldWidth: number) => void;
   setNodeAct: (nodeId: string, actId: string | undefined) => void;
 
   // AV FX mode
@@ -372,8 +373,9 @@ export const useStoryStore = create<StoryStore>((set, get) => {
   },
 
   createNode: (type, position) => {
-    const { activeStory } = get();
+    const { activeStory, undoStack } = get();
     if (!activeStory) return '';
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const id = crypto.randomUUID();
     const pos = position ?? {
       x: 380 + Math.random() * 160 - 80,
@@ -411,7 +413,7 @@ export const useStoryStore = create<StoryStore>((set, get) => {
     if (!activeStory) return;
     const target = activeStory.nodes.find((n) => n.id === nodeId);
     if (target?.locked) return;
-    if (target?.isRoot && !window.confirm('This is a Seed AI anchor node. Deleting it may break the planted story structure. Delete anyway?')) return;
+    if (target?.isRoot && !window.confirm('This is a Seed anchor node. Deleting it may break the planted story structure. Delete anyway?')) return;
     const updated = stamp({
       ...activeStory,
       nodes: activeStory.nodes
@@ -431,7 +433,7 @@ export const useStoryStore = create<StoryStore>((set, get) => {
     persist(updated);
   },
 
-  undoDeleteNode: () => {
+  undoCanvas: () => {
     const { undoStack } = get();
     if (undoStack.length === 0) return;
     const previous = undoStack[undoStack.length - 1];
@@ -453,8 +455,9 @@ export const useStoryStore = create<StoryStore>((set, get) => {
   },
 
   batchUpdatePositions: (positions) => {
-    const { activeStory } = get();
+    const { activeStory, undoStack } = get();
     if (!activeStory) return;
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const posMap = new Map(positions.map((p) => [p.id, p]));
     const updated = stamp({
       ...activeStory,
@@ -510,8 +513,9 @@ export const useStoryStore = create<StoryStore>((set, get) => {
   },
 
   deleteChoice: (nodeId, choiceId) => {
-    const { activeStory } = get();
+    const { activeStory, undoStack } = get();
     if (!activeStory) return;
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const updated = stamp({
       ...activeStory,
       nodes: activeStory.nodes.map((n) =>
@@ -527,11 +531,12 @@ export const useStoryStore = create<StoryStore>((set, get) => {
   // ── Connect ─────────────────────────────────────────────────────────────────
 
   connectNodes: (sourceNodeId, targetNodeId, sourceHandle?, targetHandle?) => {
-    const { activeStory, addChoice, updateChoice } = get();
+    const { activeStory, undoStack, addChoice, updateChoice } = get();
     if (!activeStory || sourceNodeId === targetNodeId) return;
     const source = activeStory.nodes.find((n) => n.id === sourceNodeId);
     if (!source) return;
     if (source.choices.some((c) => c.next === targetNodeId)) return;
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const choiceId = addChoice(sourceNodeId);
     const patch: Partial<NWVChoice> = { next: targetNodeId };
     if (sourceHandle) patch.sourceHandle = sourceHandle;
@@ -542,8 +547,9 @@ export const useStoryStore = create<StoryStore>((set, get) => {
   // ── Insert between ──────────────────────────────────────────────────────────
 
   insertNodeBetween: (sourceId, targetId, type) => {
-    const { activeStory } = get();
+    const { activeStory, undoStack } = get();
     if (!activeStory) return '';
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const source = activeStory.nodes.find((n) => n.id === sourceId);
     const target = activeStory.nodes.find((n) => n.id === targetId);
     if (!source || !target) return '';
@@ -1210,6 +1216,23 @@ export const useStoryStore = create<StoryStore>((set, get) => {
     });
     const updated = stamp({ ...activeStory, acts: reordered });
     set({ activeStory: updated }); persist(updated);
+  },
+
+  resizeAct: (id, newWorldWidth) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const MIN_W = 150;
+    const sorted = [...(activeStory.acts ?? [])].sort((a, b) => a.order - b.order);
+    let cursor = 0;
+    const resized = sorted.map((a) => {
+      const w = a.id === id ? Math.max(MIN_W, newWorldWidth) : a.worldWidth;
+      const next = { ...a, worldX: cursor, worldWidth: w };
+      cursor += w;
+      return next;
+    });
+    const updated = stamp({ ...activeStory, acts: resized });
+    set({ activeStory: updated });
+    persist(updated);
   },
 
   setNodeAct: (nodeId, actId) => {

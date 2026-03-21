@@ -51,16 +51,14 @@ export function ChatNode({ id, data }: NodeProps) {
     <div
       className={`flex w-full h-full flex-col rounded-lg bg-white p-2 ${CANVAS_TEXT_CLASS[canvasTextSize]} shadow-md transition-all`}
       style={{
-        border: isPlaying
-          ? `2px solid ${firstLaneColour ?? '#22c55e'}`
-          : wasVisited
-          ? `1px solid ${firstLaneColour ?? '#22c55e'}66`
+        border: wasVisited
+          ? `1.5px solid ${firstLaneColour ?? '#22c55e'}99`
           : '1px solid #e2e8f0',
-        boxShadow: isPlaying
+        boxShadow: (isPlaying || isSelected)
           ? `inset 4px 0 0 ${firstLaneColour ?? '#22c55e'}, 0 0 20px 6px ${firstLaneColour ?? '#22c55e'}44`
+          : wasVisited
+          ? `inset 4px 0 0 ${firstLaneColour ?? '#22c55e'}, 0 0 12px 4px ${firstLaneColour ?? '#22c55e'}33`
           : `inset 4px 0 0 ${firstLaneColour ?? '#22c55e'}`,
-        outline: isSelected ? `2px solid ${firstLaneColour ?? '#22c55e'}` : 'none',
-        outlineOffset: '2px',
         animation: isPlaying ? 'nodePulse 1.2s ease-in-out infinite' : undefined,
       }}
     >

@@ -31,6 +31,7 @@ export function TwistNode({ id, data }: NodeProps) {
     ? lanes.find((l) => l.id === node.lanes[0])?.colour
     : undefined;
   const canvasTextSize = useSettingsStore((s) => s.canvasTextSize);
+  const isHighImpact = node.isHighImpact === true;
 
   const avatarChars = useMemo(() => {
     const seen = new Set<string>();
@@ -51,16 +52,18 @@ export function TwistNode({ id, data }: NodeProps) {
     <div
       className={`flex w-full h-full flex-col rounded-lg bg-white p-2 ${CANVAS_TEXT_CLASS[canvasTextSize]} shadow-md transition-all`}
       style={{
-        border: isPlaying
-          ? `2px solid ${firstLaneColour ?? '#a855f7'}`
-          : wasVisited
-          ? `1px solid ${firstLaneColour ?? '#a855f7'}66`
+        border: wasVisited
+          ? `1.5px solid ${firstLaneColour ?? '#a855f7'}99`
+          : isHighImpact
+          ? '1px dashed #f59e0b'
           : '1px dashed #e2e8f0',
-        boxShadow: isPlaying
+        boxShadow: (isPlaying || isSelected)
           ? `inset 4px 0 0 ${firstLaneColour ?? '#a855f7'}, 0 0 20px 6px ${firstLaneColour ?? '#a855f7'}44`
+          : wasVisited
+          ? `inset 4px 0 0 ${firstLaneColour ?? '#a855f7'}, 0 0 12px 4px ${firstLaneColour ?? '#a855f7'}33`
+          : isHighImpact
+          ? 'inset 4px 0 0 #f59e0b'
           : `inset 4px 0 0 ${firstLaneColour ?? '#a855f7'}`,
-        outline: isSelected ? `2px solid ${firstLaneColour ?? '#a855f7'}` : 'none',
-        outlineOffset: '2px',
         animation: isPlaying ? 'nodePulse 1.2s ease-in-out infinite' : undefined,
       }}
     >
@@ -97,6 +100,7 @@ export function TwistNode({ id, data }: NodeProps) {
             ))}
           </span>
         )}
+        {isHighImpact && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">High Impact</span>}
         {node.status && <span className="text-xs text-slate-500">{node.status}</span>}
         <button
           className="nodrag ml-auto rounded px-1 py-0.5 text-[9px] text-slate-300 hover:bg-violet-50 hover:text-violet-600 transition-colors"

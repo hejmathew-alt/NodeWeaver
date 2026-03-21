@@ -1,26 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AI_MAX_TOKENS, AI_MAX_TOKENS_DEFAULT } from '@/lib/constants';
-import { buildSystemPrompt, buildUserMessage, NON_STREAMING_MODES } from '@/lib/ai-prompts';
+import { buildSeedChatSystem } from '@/lib/ai-prompts';
 
 export const runtime = 'nodejs';
 
-interface GenerateRequest {
-  mode: string;
-  prompt: string;
-  anthropicKey: string;
-  context?: Record<string, unknown>;
+interface SeedChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+interface LockedState {
+  premise: string | null;
+  characters: { name: string; role: string; wound: string; want: string }[];
+  worldFacts: string[];
+  genre: string;
+}
+
+interface SeedChatRequest {
+  phase: 'spark' | 'premise' | 'cast' | 'architecture';
+  history: SeedChatMessage[];
+  locked: LockedState;
+  message: string;
+  anthropicKey?: string;
 }
 
 export async function POST(req: NextRequest) {
-  const body: GenerateRequest = await req.json().catch(() => null);
+  const body: SeedChatRequest | null = await req.json().catch(() => null);
   if (!body) return NextResponse.json({ error: 'Invalid request.' }, { status: 400 });
 
-  const { mode, prompt, anthropicKey: clientKey, context } = body;
+  const { phase, history, locked, message, anthropicKey: clientKey } = body;
 
-  // Prefer the key baked into .env.local (persists across browser sessions);
-  // fall back to whatever the Settings panel supplied.
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim() || clientKey?.trim();
-
   if (!anthropicKey) {
     return NextResponse.json(
       { error: 'No Anthropic API key — add ANTHROPIC_API_KEY to .env.local or enter one in Settings.' },
@@ -28,10 +37,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const systemPrompt = buildSystemPrompt(mode, prompt, context);
-  const userMessage = buildUserMessage(mode, prompt, context);
-  const isNonStreaming = NON_STREAMING_MODES.includes(mode);
-  const maxTokens = AI_MAX_TOKENS[mode] ?? AI_MAX_TOKENS_DEFAULT;
+  const systemPrompt = buildSeedChatSystem(phase, locked);
+
+  // Build messages array: history + new user message
+  const messages: SeedChatMessage[] = [
+    ...history,
+    { role: 'user', content: message },
+  ];
 
   let anthropicRes: Response;
   try {
@@ -44,10 +56,10 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: maxTokens,
+        max_tokens: 500,
         system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-        stream: !isNonStreaming,
+        messages,
+        stream: true,
       }),
     });
   } catch {
@@ -59,31 +71,6 @@ export async function POST(req: NextRequest) {
     const msg =
       (err as { error?: { message?: string } }).error?.message ?? `HTTP ${anthropicRes.status}`;
     return NextResponse.json({ error: msg }, { status: anthropicRes.status });
-  }
-
-  // Non-streaming modes
-  if (isNonStreaming) {
-    const result = await anthropicRes.json().catch(() => null);
-    const text = (result as { content?: { text?: string }[] })?.content?.[0]?.text ?? '';
-    if (mode === 'story-gen') return NextResponse.json({ story: text });
-    if (mode === 'avatar-prompt') return NextResponse.json({ text: text.trim() });
-    // Strip markdown fences Claude sometimes adds despite being told not to
-    const cleaned = text.replace(/^```(?:json)?\s*/im, '').replace(/\s*```$/im, '').trim();
-    if (mode === 'command-interpret') return NextResponse.json({ command: cleaned });
-    if (mode === 'world-step' || mode === 'world-recycle') return NextResponse.json({ world: cleaned });
-    // For seed modes: extract JSON object from response (handles extra prose before/after)
-    if (mode === 'seed-premise' || mode === 'seed-premise-expand' || mode === 'seed-worldcast' || mode === 'seed-architecture') {
-      const jsonMatch = /\{[\s\S]*\}/.exec(cleaned);
-      const jsonStr = jsonMatch ? jsonMatch[0] : cleaned;
-      try {
-        const parsed = JSON.parse(jsonStr);
-        if (mode === 'seed-premise' || mode === 'seed-premise-expand') return NextResponse.json({ options: parsed.options ?? [] });
-        return NextResponse.json(parsed);
-      } catch {
-        return NextResponse.json({ error: `Failed to parse ${mode} response.` }, { status: 500 });
-      }
-    }
-    return NextResponse.json({ suggestions: cleaned });
   }
 
   if (!anthropicRes.body) {

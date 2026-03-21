@@ -15,9 +15,9 @@ import * as path from 'path';
 
 const COMFYUI_PORT   = 8188;
 const COMFYUI_URL    = `http://127.0.0.1:${COMFYUI_PORT}`;
-const COMFYUI_PYTHON = path.join(os.homedir(), 'Documents/NodeWeaver/servers/venv/bin/python');
-const COMFYUI_SCRIPT = path.join(os.homedir(), 'Documents/NodeWeaver/servers/comfyui/main.py');
-const COMFYUI_MODELS = path.join(os.homedir(), 'Documents/NodeWeaver/servers/comfyui/models/checkpoints');
+const COMFYUI_PYTHON = path.join(os.homedir(), 'Documents/Claude Projects/NodeWeaver/servers/venv/bin/python');
+const COMFYUI_SCRIPT = path.join(os.homedir(), 'Documents/Claude Projects/NodeWeaver/servers/comfyui/main.py');
+const COMFYUI_MODELS = path.join(os.homedir(), 'Documents/Claude Projects/NodeWeaver/servers/comfyui/models/checkpoints');
 
 // ── Singleton state ──────────────────────────────────────────────────────────
 
@@ -106,6 +106,7 @@ async function spawnAndWait(): Promise<void> {
         env: {
           PATH: process.env.PATH ?? '',
           HOME: process.env.HOME ?? '',
+          NODE_ENV: process.env.NODE_ENV ?? 'development',
           // Allow MPS ops that lack native kernels to fall back to CPU
           // instead of raising BrokenPipeError / RuntimeError during KSampler
           PYTORCH_ENABLE_MPS_FALLBACK: '1',

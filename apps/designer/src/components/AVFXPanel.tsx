@@ -531,7 +531,7 @@ export function AVFXPanel({ story }: AVFXPanelProps) {
             genre: story.metadata?.genre,
             nodeTitle: node.title,
             nodeMood: node.mood,
-            nodeBody: node.blocks.map((b) => b.text).join(' ').slice(0, 300),
+            nodeBody: (node.blocks ?? []).map((b) => b.text).join(' ').slice(0, 300),
             description: vfxAiPrompt.trim(),
           },
         }),

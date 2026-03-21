@@ -98,7 +98,7 @@ function layoutNodes(nodes: NWVNode[]): NWVNode[] {
     if (!byLevel.has(level)) byLevel.set(level, []);
     byLevel.get(level)!.push(id);
   }
-  const NODE_W = 340, NODE_H = 230;
+  const NODE_W = 480, NODE_H = 320;
   return nodes.map((n) => {
     const level = levels.get(n.id) ?? 0;
     const siblings = byLevel.get(level) ?? [n.id];
@@ -113,7 +113,7 @@ function hydrateStory(raw: Record<string, unknown>, genre: GenreSlug): NWVStory 
   const id = `story-${Date.now()}`;
   const now = new Date().toISOString();
   const meta = (raw.metadata ?? {}) as Record<string, unknown>;
-  const rawNodes = ((raw.nodes as NWVNode[]) ?? []).map((n) => ({ audio: [], lanes: [], ...n }));
+  const rawNodes = ((raw.nodes as NWVNode[]) ?? []).map((n) => ({ ...n, audio: n.audio ?? [], lanes: n.lanes ?? [] }));
   return {
     version: '1.0', id,
     metadata: {
@@ -397,7 +397,7 @@ export function InspireModal({ onClose, onStoriesChanged, existingTitles = [] }:
         onStoriesChanged={onStoriesChanged}
       />
     )}
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
       <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">

@@ -21,6 +21,7 @@ export const NON_STREAMING_MODES = [
   'loom-analyse',
   'lighting-suggest',
   'seed-premise',
+  'seed-premise-expand',
   'seed-worldcast',
   'seed-architecture',
 ];
@@ -48,10 +49,11 @@ export function buildSystemPrompt(
     case 'loom-chat':         return LOOM_CHAT_SYSTEM;
     case 'lighting-suggest':  return LIGHTING_SUGGEST_SYSTEM;
     case 'node-description':  return buildNodeDescriptionSystem(context);
-    case 'seed-spark':        return SEED_SPARK_SYSTEM;
-    case 'seed-premise':      return buildSeedPremiseSystem(context);
-    case 'seed-worldcast':    return SEED_WORLDCAST_SYSTEM;
-    case 'seed-architecture': return SEED_ARCHITECTURE_SYSTEM;
+    case 'seed-spark':          return SEED_SPARK_SYSTEM;
+    case 'seed-premise':        return buildSeedPremiseSystem(context);
+    case 'seed-premise-expand': return buildSeedPremiseExpandSystem(context);
+    case 'seed-worldcast':      return SEED_WORLDCAST_SYSTEM;
+    case 'seed-architecture':   return SEED_ARCHITECTURE_SYSTEM;
     default:                  return buildBodySystem(context);
   }
 }
@@ -101,6 +103,8 @@ export function buildUserMessage(
       return buildSeedSparkUser(context, prompt);
     case 'seed-premise':
       return buildSeedPremiseUser(context, prompt);
+    case 'seed-premise-expand':
+      return buildSeedPremiseExpandUser(context);
     case 'seed-worldcast':
       return buildSeedWorldcastUser(context);
     case 'seed-architecture':
@@ -819,7 +823,203 @@ function buildLoomChatUser(ctx?: Record<string, unknown>, prompt?: string): stri
   return `${summary}\n\nWriter's question: ${question}`;
 }
 
-// ── Seed AI prompts ──────────────────────────────────────────────────────────
+// ── Seed prompts ─────────────────────────────────────────────────────────────
+// Conversation-first tab model: chat in Conversation tab, structured generation
+// for Premise / Cast / Architecture tabs via /api/seed-generate.
+
+// ── Seed Chat — phase-scoped system prompts ─────────────────────────────────
+
+const SEED_PERSONA = `You are Seed, a warm and direct creative collaborator who helps writers develop stories for interactive fiction. You speak like a smart friend who reads a lot — slightly playful, never condescending.
+
+RULES:
+- End every response with exactly ONE question or ONE set of suggestion chips — never both, never two questions
+- Suggestion chips: offer 3–5 short options the writer can click (genre, tone, character type, setting element). Format chips as a JSON array on its own line at the very end: [CHIPS: "option1", "option2", "option3"]
+- NEVER use these words: "inciting incident", "protagonist", "narrative arc", "story beats", "three-act", "antagonist", "climax", "denouement", "rising action", "falling action"
+- Use instead: plain emotional language — "the moment everything gets worse", "the person they can't stop thinking about", "when the ground drops out"
+- Keep responses concise — 2–4 sentences before the question or chips
+- Never generate structured data (premises, characters, etc.) in chat — that happens silently in background tabs
+
+PHASE MARKERS (invisible to the writer — stripped before display):
+- When the conversation has reached enough depth for the next phase, include a phase marker on its own line at the very END of your response (after chips if present): [PHASE:premise], [PHASE:cast], or [PHASE:architecture]
+- PHASE THRESHOLDS:
+  - [PHASE:premise]: Genre + emotional tone + seed of dramatic situation (who + what they want OR what goes wrong). Minimum 2 exchanges.
+  - [PHASE:cast]: Premise confirmed AND at least 2 characters discussed by name or role.
+  - [PHASE:architecture]: Characters discussed AND emotional shape or key moments mentioned.
+- You can emit the same phase marker again if the writer revises something already established — this triggers re-generation.
+- Phase markers are invisible to the writer. Never reference them in your text. Never say "the premise tab is ready" or similar.`;
+
+const SEED_PHASE_INSTRUCTIONS: Record<string, string> = {
+  spark: `Your only job right now is to help the writer articulate a tone, genre, and feeling for their story.
+Do NOT discuss plot structure. Do NOT invent characters. Do NOT ask about endings.
+Ask about the feeling they want the player to have. Explore atmosphere, mood, and emotional register.
+If the writer mentions a reference (book, film, game), reflect on what specifically about that reference resonates — not plot but feeling.
+When you have a clear sense of genre and emotional core AND the writer has hinted at a dramatic situation, include [PHASE:premise] at the end of your response.
+If the writer revises something already established, acknowledge it and emit the relevant [PHASE:X] again to trigger re-generation.`,
+
+  premise: `Your only job right now is to help the writer sharpen their premise.
+A premise is: [who] wants [what] but [obstacle].
+Help them find the most compelling version of their core dramatic question.
+Do NOT discuss world-building details. Do NOT invent supporting characters.
+Ask about stakes, what makes the obstacle personal, what makes the want urgent.
+When the premise feels locked and the writer is ready to discuss people, include [PHASE:cast] at the end of your response.
+If the writer revises something already established, acknowledge it and emit the relevant [PHASE:X] again to trigger re-generation.`,
+
+  cast: `Your only job right now is to help the writer develop their characters.
+Each character needs at minimum: a name and a role (what they do in the story). Wound (what happened to them) and want (what they're chasing) add depth but are not required to move forward.
+The wound/want gap is where complexity lives — help them find it when they're ready.
+Do NOT discuss plot structure or act breaks. Stay focused on who these people are.
+When the cast feels complete (at least 2 characters with names and roles), include [PHASE:architecture] at the end of your response.
+If the writer revises something already established, acknowledge it and emit the relevant [PHASE:X] again to trigger re-generation.`,
+
+  architecture: `Your only job right now is to help the writer plan the emotional shape of their story.
+Talk about the feeling of each phase — what should the player experience early on, what shifts in the middle, what lands at the end.
+Help them identify 2–4 moments that will genuinely surprise or move the player. These should be specific to their premise and characters, not generic beats.
+When the architecture feels solid, tell the writer they're ready to plant — but do NOT emit a phase marker here. The writer clicks "Plant this seed" when ready.
+If the writer revises something already established, acknowledge it and emit the relevant [PHASE:X] again to trigger re-generation.`,
+};
+
+export function buildSeedChatSystem(
+  phase: string,
+  locked: { premise: string | null; characters: { name: string; role: string; wound: string; want: string }[]; worldFacts: string[]; genre: string },
+): string {
+  const phaseInstruction = SEED_PHASE_INSTRUCTIONS[phase] ?? SEED_PHASE_INSTRUCTIONS.spark;
+  const genreMeta = GENRE_META[locked.genre as keyof typeof GENRE_META];
+  const brief = genreMeta?.brief ?? '';
+
+  const lockedLines: string[] = ['Current locked state:'];
+  lockedLines.push(`- Genre: ${locked.genre}${brief ? ` (${brief})` : ''}`);
+  lockedLines.push(`- Premise: ${locked.premise || 'not yet locked'}`);
+  if (locked.characters.length > 0) {
+    lockedLines.push(`- Characters: ${locked.characters.map(c => `${c.name} (${c.role})`).join(', ')}`);
+  } else {
+    lockedLines.push('- Characters: none yet');
+  }
+  if (locked.worldFacts.length > 0) {
+    lockedLines.push(`- World facts: ${locked.worldFacts.join('; ')}`);
+  } else {
+    lockedLines.push('- World facts: none yet');
+  }
+
+  return `${SEED_PERSONA}\n\n${phaseInstruction}\n\n${lockedLines.join('\n')}`;
+}
+
+// ── Seed Generate — structured JSON generation ──────────────────────────────
+
+export function buildSeedGenerateSystem(
+  type: string,
+  locked: { premise: string | null; characters: { name: string; role: string; wound: string; want: string }[]; worldFacts: string[]; genre: string },
+): string {
+  const genreMeta = GENRE_META[locked.genre as keyof typeof GENRE_META];
+  const brief = genreMeta?.brief ?? '';
+
+  switch (type) {
+    case 'premise':
+      return `You are crystallising the writer's conversation into a single structured premise for an interactive fiction story.
+
+CRITICAL: The writer has been having a conversation about their story idea. The conversation is your PRIMARY input. The premise MUST be directly derived from what the writer said — their themes, characters, settings, moods, and ideas. If the writer mentioned a specific character concept, that character must appear. If they described a specific setting, use it. If they expressed a tone or mood, honour it.
+
+Do NOT generate a generic premise. Do NOT ignore the conversation and invent your own ideas. Your job is to crystallise what the writer already expressed into one clear premise.
+
+Format: [who] wants [what] but [obstacle].
+${brief ? `Genre brief: ${brief}` : ''}
+${locked.premise ? `Previously established premise (refining): ${locked.premise}` : ''}
+Return JSON only. No preamble, no markdown fences.
+Format: { "premise": { "who": "...", "wants": "...", "but": "...", "fullText": "..." } }
+fullText is the combined natural-language premise sentence.`;
+
+    case 'premises':
+      return `You are generating structured premise options for an interactive fiction story.
+
+CRITICAL: The writer has been having a conversation about their story idea. The conversation is your PRIMARY input. Every premise you generate MUST be directly derived from what the writer said — their themes, characters, settings, moods, and ideas. If the writer mentioned a specific character concept, that character must appear in at least one premise. If they described a specific setting, use it. If they expressed a tone or mood, honour it.
+
+Do NOT generate generic premises that could apply to any story. Do NOT ignore the conversation and invent your own ideas. Your job is to crystallise what the writer already expressed into structured premise form.
+
+Generate exactly 3 distinct premise options in the format: [who] wants [what] but [obstacle].
+Each premise should feel dramatically distinct from the others — different angles on the same core idea the writer explored in conversation. "Distinct" means different dramatic stakes or obstacles, not different window dressing on the same plot.
+${brief ? `Genre brief: ${brief}` : ''}
+${locked.premise ? `Previously locked premise (if regenerating): ${locked.premise}` : ''}
+Return JSON only. No preamble, no markdown fences.
+Format: { "options": [{ "who": "...", "wants": "...", "but": "...", "fullText": "..." }, ...] }
+fullText is the combined natural-language premise sentence.`;
+
+    case 'cast':
+      return `You are generating characters for an interactive fiction story.
+Given the conversation context and locked premise, generate character cards.
+
+IMPORTANT: If the writer mentioned specific characters, character types, or relationships in their conversation, honour those directly. Build on what they described — don't replace their ideas with generic archetypes.
+
+Before generating character cards, scan the full conversation history and extract every named character mentioned, however briefly. List them all. Generate a card for each one. If uncertain whether a named entity is a character rather than a place or object, include it and flag it with "uncertain": true in the JSON — the UI will prompt the author to confirm or dismiss. Never silently omit a named character.
+
+Each character card contains exactly three fields. One sentence per field, no exceptions. No physical descriptions. No prose. Follow this structure strictly:
+- role: Their function in the story
+- wound: What they carry or what happened to them
+- want: What they are consciously chasing
+
+The wound and want should create dramatic tension — the gap between them is where character complexity lives.
+Use culturally diverse names. Make each character feel specific and grounded in the premise.
+Return JSON only. No preamble, no markdown fences.
+Format: { "characters": [{ "name": "...", "role": "...", "wound": "...", "want": "...", "uncertain": false }, ...] }`;
+
+    case 'architecture':
+      return `You are generating narrative architecture for an interactive fiction story.
+Given the conversation context, premise, and characters, generate:
+- 3 to 5 acts: each with a label (2–5 words describing the emotional phase, NOT "Act 1") and emotionalBeat (the core feeling of this phase, plain language)
+- 3 to 5 jaw-drop moments: specific dramatic events that will surprise or move the player. Each has title (5–8 words), description (1–2 sentences), and position ("early", "middle", or "late").
+Jaw-drop moments must be specific to the premise and characters — not generic thriller beats.
+Return JSON only. No preamble, no markdown fences.
+Format: { "acts": [{ "label": "...", "emotionalBeat": "..." }, ...], "moments": [{ "title": "...", "description": "...", "position": "early" | "middle" | "late" }, ...] }`;
+
+    default:
+      return 'Return JSON only.';
+  }
+}
+
+export function buildSeedGenerateUser(
+  type: string,
+  conversationSummary: string,
+  locked: { premise: string | null; characters: { name: string; role: string; wound: string; want: string }[]; worldFacts: string[]; genre: string },
+): string {
+  const lines: string[] = [];
+  lines.push(`Genre: ${locked.genre}`);
+
+  // For premise/premises, extract writer messages separately for emphasis
+  if ((type === 'premise' || type === 'premises') && conversationSummary) {
+    const writerLines = conversationSummary
+      .split('\n')
+      .filter(l => l.startsWith('Writer:'))
+      .map(l => l.replace(/^Writer:\s*/, '').trim())
+      .filter(Boolean);
+
+    if (writerLines.length > 0) {
+      lines.push(`\nTHE WRITER'S OWN WORDS (these are the ideas you must build from):\n${writerLines.map(l => `  > "${l}"`).join('\n')}`);
+    }
+    lines.push(`\nFull conversation for additional context:\n${conversationSummary}`);
+  } else if (conversationSummary) {
+    lines.push(`Conversation context:\n${conversationSummary}`);
+  }
+
+  if (locked.premise) lines.push(`Locked premise: ${locked.premise}`);
+  if (locked.worldFacts.length > 0) {
+    lines.push(`World facts:\n${locked.worldFacts.map(f => `  - ${f}`).join('\n')}`);
+  }
+  if (locked.characters.length > 0) {
+    lines.push(`Characters:\n${locked.characters.map(c => `  - ${c.name} (${c.role}): wound="${c.wound}", want="${c.want}"`).join('\n')}`);
+  }
+  switch (type) {
+    case 'premise':
+      return lines.join('\n') + '\n\nCrystallise the conversation into a single premise that captures the writer\'s ideas.';
+    case 'premises':
+      return lines.join('\n') + '\n\nGenerate 3 distinct premise options that directly reflect the writer\'s ideas above.';
+    case 'cast':
+      return lines.join('\n') + '\n\nGenerate characters for this story.';
+    case 'architecture':
+      return lines.join('\n') + '\n\nGenerate narrative architecture with acts and jaw-drop moments.';
+    default:
+      return lines.join('\n');
+  }
+}
+
+// ── Legacy seed prompts (kept for backward compat with /api/ai/generate) ────
 
 const SEED_SPARK_SYSTEM = `You are a creative collaborator helping a writer find the emotional core of their story idea.
 Respond in exactly 2 sentences. First sentence: reflect the emotional feeling or atmosphere they described, using evocative language — not a plot summary. Second sentence: optionally suggest a different genre if their idea sounds like it fits one strongly (e.g. "This feels more fantasy than sci-fi"). If their genre feels right, omit the second sentence.
@@ -866,6 +1066,26 @@ function buildSeedPremiseUser(ctx?: Record<string, unknown>, prompt?: string): s
   if (ctx?.sparkReflection) lines.push(`Spark reflection: ${ctx.sparkReflection}`);
   if (prompt?.trim()) lines.push(`Writer's original spark: ${prompt.trim()}`);
   return lines.join('\n') || 'Generate 3 premise options for a story.';
+}
+
+function buildSeedPremiseExpandSystem(ctx?: Record<string, unknown>): string {
+  const genre = (ctx?.genre as string | undefined) ?? 'sci-fi';
+  const genreMeta = GENRE_META[genre as keyof typeof GENRE_META];
+  const brief = genreMeta?.brief ?? '';
+  return `You are helping a writer explore variations of a story premise they liked.
+Given a selected premise, generate exactly 3 dramatically distinct expansions — each takes the core idea in a different direction while preserving what made the original compelling.
+Do not just rewrite the same premise with different words. Push each variation somewhere genuinely different: different stakes, different character dynamic, different setting or time pressure.
+${brief ? `Genre brief: ${brief}` : ''}
+Return JSON only. No preamble, no markdown fences.
+Format: { "options": [{ "who": "...", "wants": "...", "but": "...", "fullText": "..." }, ...] }
+fullText is the combined natural-language premise sentence.`;
+}
+
+function buildSeedPremiseExpandUser(ctx?: Record<string, unknown>): string {
+  const lines: string[] = [];
+  if (ctx?.genre) lines.push(`Genre: ${ctx.genre}`);
+  if (ctx?.parentPremise) lines.push(`Selected premise to expand: ${ctx.parentPremise}`);
+  return lines.join('\n') || 'Expand this premise into 3 variations.';
 }
 
 function buildSeedWorldcastUser(ctx?: Record<string, unknown>): string {

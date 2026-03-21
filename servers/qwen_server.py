@@ -45,6 +45,12 @@ import soundfile as sf
 # Use the already-cached 8-bit MLX model (balance of speed and quality on M4).
 MODEL_ID = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit"
 
+# Qwen3-TTS bleeds instruct/voice-conditioning tokens into the first ~200ms of
+# audio before the model locks onto the actual spoken text.  Trimming this
+# preamble from the first audio chunk eliminates the "wrong first words" artefact
+# without affecting the rest of the synthesis.
+TRIM_START_MS = 200
+
 # ── Lazy model singleton ──────────────────────────────────────────────────────
 
 _model = None
@@ -232,6 +238,9 @@ class QwenHandler(BaseHTTPRequestHandler):
             # Concatenate all chunk arrays
             all_audio = np.concatenate([np.array(c[0], dtype=np.float32) for c in chunks])
             sample_rate = chunks[0][1]
+            # Trim instruct bleed-through from the start
+            trim_samples = int(TRIM_START_MS * sample_rate / 1000)
+            all_audio = all_audio[trim_samples:]
             wav_bytes = _array_to_wav_bytes(all_audio, sample_rate)
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
@@ -254,6 +263,7 @@ class QwenHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
 
+            first_chunk = True
             for audio, sample_rate in _iter_voice_design(
                 text=body.get("text", ""),
                 instruct=body.get("instruct", ""),
@@ -262,7 +272,15 @@ class QwenHandler(BaseHTTPRequestHandler):
                 streaming_interval=float(body.get("streaming_interval", 0.32)),
                 max_tokens=int(body.get("max_tokens", 4096)),
             ):
-                wav_bytes = _array_to_wav_bytes(audio, sample_rate)
+                audio_np = np.array(audio, dtype=np.float32)
+                if first_chunk:
+                    # Trim instruct bleed-through from the start of synthesis
+                    trim_samples = int(TRIM_START_MS * sample_rate / 1000)
+                    audio_np = audio_np[trim_samples:]
+                    first_chunk = False
+                if audio_np.size == 0:
+                    continue
+                wav_bytes = _array_to_wav_bytes(audio_np, sample_rate)
                 length_prefix = struct.pack(">I", len(wav_bytes))
                 try:
                     self.wfile.write(length_prefix + wav_bytes)

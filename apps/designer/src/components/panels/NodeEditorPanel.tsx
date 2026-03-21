@@ -654,7 +654,7 @@ function BlockEditor({
                   onChange={(e) => updateBlock(nodeId, block.id, { characterId: e.target.value || undefined })}
                   title={hasVoice ? `${resolvedChar?.name} — voice set` : 'No voice — will be skipped during playback'}
                 >
-                  <option value="">Default</option>
+                  <option value="">Narrator</option>
                   {characters.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
@@ -866,8 +866,6 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
     updateNode,
     deleteNode,
     addChoice,
-    assignNodeToLane,
-    removeNodeFromLane,
   } = useStoryStore();
   const { anthropicKey, sfxProvider, elevenLabsKey, qwenTemperature } = useSettingsStore();
 
@@ -1026,13 +1024,14 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
   // ── AI description generation ────────────────────────────────────────────────
 
   async function handleAiDescription() {
+    if (!activeStory || !node) return;
     setDescAiLoading(true);
     setDescAiError(null);
     const blocksCtx = blocks.map((b) => {
       const char = (activeStory.characters ?? []).find((c) => c.id === (b.characterId || 'narrator'));
       return { type: b.type, text: b.text, characterName: char?.name };
     });
-    const flatCtx = aiContextToFlat(buildAIContext(activeStory, selectedNodeId), activeStory, selectedNodeId);
+    const flatCtx = aiContextToFlat(buildAIContext(activeStory, selectedNodeId ?? ''), activeStory, selectedNodeId ?? '');
     const res = await fetch('/api/ai/generate', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1543,7 +1542,7 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
                     <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: lane.colour }} />
                     {lane.name}
                     <button
-                      onClick={() => removeNodeFromLane(node.id, laneId)}
+                      onClick={() => updateNode(node.id, { lanes: (node.lanes ?? []).filter(l => l !== laneId) })}
                       className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity"
                     >
                       ✕
@@ -1568,7 +1567,7 @@ export function NodeEditorPanel({ panelWidth, isExpanded, onToggleExpand, onResi
                           <button
                             key={lane.id}
                             onClick={() => {
-                              assignNodeToLane(node.id, lane.id);
+                              updateNode(node.id, { lanes: [...(node.lanes ?? []), lane.id] });
                               setLaneDropdownOpen(false);
                             }}
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"

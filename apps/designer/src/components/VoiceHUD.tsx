@@ -52,7 +52,6 @@ export function VoiceHUD({ story }: VoiceHUDProps) {
     createNode,
     saveToLinkedFile,
     setCanvasPlayNodeId,
-    undoDeleteNode,
     addBlock,
   } = useStoryStore();
 
@@ -136,7 +135,7 @@ export function VoiceHUD({ story }: VoiceHUDProps) {
         createNode,
         saveToLinkedFile,
         setCanvasPlayNodeId,
-        undoDeleteNode,
+        undoDeleteNode: () => {},
         addBlock,
       });
 
@@ -154,7 +153,6 @@ export function VoiceHUD({ story }: VoiceHUDProps) {
       createNode,
       saveToLinkedFile,
       setCanvasPlayNodeId,
-      undoDeleteNode,
       addBlock,
     ],
   );

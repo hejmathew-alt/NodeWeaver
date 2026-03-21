@@ -378,7 +378,7 @@ export function FinaliseModal({ story, provider, onClose }: FinaliseModalProps) 
               </button>
               <button
                 onClick={() => runBatch(false)}
-                disabled={!prereq.ok || toGenerate === 0}
+                disabled={prereq.missingKey || prereq.missingVoices.length > 0 || toGenerate === 0}
                 className="rounded border border-emerald-400 bg-emerald-50 px-4 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Generate {toGenerate > 0 ? `${toGenerate} block${toGenerate !== 1 ? 's' : ''}` : ''}

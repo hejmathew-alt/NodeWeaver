@@ -41,6 +41,11 @@ body {
   height: 10px !important;
 }
 
+/* Suppress React Flow's default selected-node outline — nodes apply their own via inline style */
+.react-flow__node.selected {
+  outline: none !important;
+}
+
 /* View crossfade transition */
 @keyframes fadeIn {
   from { opacity: 0; }

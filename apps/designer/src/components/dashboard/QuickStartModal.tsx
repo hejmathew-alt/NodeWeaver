@@ -85,8 +85,8 @@ function layoutNodes(nodes: NWVNode[]): NWVNode[] {
     byLevel.get(level)!.push(id);
   }
 
-  const NODE_W = 340;
-  const NODE_H = 230;
+  const NODE_W = 480;
+  const NODE_H = 320;
 
   // L→R layout: x encodes depth (spine), y encodes sibling spread (branching)
   return nodes.map((n) => {
@@ -114,9 +114,9 @@ function hydrateStory(
   const now = new Date().toISOString();
   const meta = (raw.metadata ?? {}) as Record<string, unknown>;
   const rawNodes = ((raw.nodes as NWVNode[]) ?? []).map((n) => ({
-    audio: [],
-    lanes: [],
     ...n,
+    audio: n.audio ?? [],
+    lanes: n.lanes ?? [],
   }));
 
   return {
@@ -214,7 +214,7 @@ export function QuickStartModal({ onClose, onStoriesChanged }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
       <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">

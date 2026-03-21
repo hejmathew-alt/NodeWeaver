@@ -41,13 +41,13 @@ cd apps/designer && npx playwright install chromium
 Run all three suites from `apps/designer/`:
 
 ```bash
-cd /Users/mojomathers/Documents/NodeWeaver/apps/designer && pnpm test:unit 2>&1; echo "--- UNIT DONE ---"
+cd /Users/mojomathers/Documents/Claude Projects/NodeWeaver/apps/designer && pnpm test:unit 2>&1; echo "--- UNIT DONE ---"
 ```
 ```bash
-cd /Users/mojomathers/Documents/NodeWeaver/apps/designer && pnpm test:integration 2>&1; echo "--- INTEGRATION DONE ---"
+cd /Users/mojomathers/Documents/Claude Projects/NodeWeaver/apps/designer && pnpm test:integration 2>&1; echo "--- INTEGRATION DONE ---"
 ```
 ```bash
-cd /Users/mojomathers/Documents/NodeWeaver/apps/designer && pnpm test:e2e 2>&1; echo "--- E2E DONE ---"
+cd /Users/mojomathers/Documents/Claude Projects/NodeWeaver/apps/designer && pnpm test:e2e 2>&1; echo "--- E2E DONE ---"
 ```
 
 Note: some tests may fail with `ECONNREFUSED` if optional services (Qwen TTS at port 7862) are not running. This is expected — those tests are designed to skip gracefully.
@@ -55,7 +55,7 @@ Note: some tests may fail with `ECONNREFUSED` if optional services (Qwen TTS at 
 ### Step 4 — Generate the report
 
 ```bash
-cd /Users/mojomathers/Documents/NodeWeaver/apps/designer && pnpm test:report 2>&1
+cd /Users/mojomathers/Documents/Claude Projects/NodeWeaver/apps/designer && pnpm test:report 2>&1
 ```
 
 ### Step 5 — Read and present the report

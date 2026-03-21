@@ -27,6 +27,8 @@ export const AI_MAX_TOKENS: Record<string, number> = {
   'seed-premise':      1200,
   'seed-worldcast':    1500,
   'seed-architecture': 2000,
+  'seed-chat':         400,
+  'seed-generate':     2000,
 };
 
 /** Fallback token limit for any mode not listed above (e.g. 'body') */
