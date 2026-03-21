@@ -12,13 +12,17 @@ import {
   COMFYUI_BASE_URL,
 } from '@/lib/comfyui-daemon';
 
-/** True when the URL points to the local managed instance. */
-function isLocalUrl(url: string): boolean {
-  return (
-    url.includes('localhost:8188') ||
-    url.includes('127.0.0.1:8188') ||
-    url === COMFYUI_BASE_URL
-  );
+const ALLOWED_COMFYUI_HOST = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?(\/|$)/;
+
+/** Returns true if the URL is a local/LAN address (safe to forward requests to). */
+function isAllowedComfyUrl(url: string): boolean {
+  try {
+    // Ensure it parses as a valid URL first
+    new URL(url);
+  } catch {
+    return false;
+  }
+  return ALLOWED_COMFYUI_HOST.test(url);
 }
 
 export async function POST(req: NextRequest) {
@@ -43,8 +47,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'prompt is required' }, { status: 400 });
   }
 
+  if (!isAllowedComfyUrl(comfyuiUrl)) {
+    return NextResponse.json(
+      { error: 'comfyuiUrl must be a localhost or LAN address' },
+      { status: 400 },
+    );
+  }
+
   // Auto-start the managed daemon when using the default local URL
-  if (isLocalUrl(comfyuiUrl)) {
+  const isManagedLocal =
+    comfyuiUrl.includes('localhost:8188') ||
+    comfyuiUrl.includes('127.0.0.1:8188') ||
+    comfyuiUrl === COMFYUI_BASE_URL;
+
+  if (isManagedLocal) {
     try {
       await ensureComfyUIReady();
     } catch (err) {
@@ -55,7 +71,7 @@ export async function POST(req: NextRequest) {
       );
     }
   } else {
-    // External URL — just health-check
+    // Non-managed local/LAN URL — just health-check
     const healthy = await checkComfyUIHealth(comfyuiUrl);
     if (!healthy) {
       return NextResponse.json(

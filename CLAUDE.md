@@ -149,7 +149,26 @@ Voice design params per block: `[Emotional: X] [Tone: Y] [Voice: Z]` bracket tag
 
 **Python venv**: `servers/venv/` — torch 2.10, diffusers 0.31, transformers 4.57.
 
-## AI Co-Author
+## AI Tool Suite
+
+Four AI tools with an organic metaphor — **Seed**, **Loom**, **Canopy**, **Graft**:
+
+| Tool | Purpose | Status |
+|------|---------|--------|
+| **Seed** | Plants the story — conversation-first wizard for concept → premise → cast → architecture → canvas | Implemented |
+| **Loom** | Weaves the nodes — per-node developmental editor with structural analysis | Implemented |
+| **Canopy** | Watches the whole shape from above — story-level structural advisor | Future |
+| **Graft** | Makes careful interventions that change direction — narrative tutor | Future |
+
+### Seed
+
+Conversation-first tabbed panel (`SeedModal.tsx`). Four tabs: **Conversation** (freeform chat), **Premise** (3 structured cards), **Cast** (character cards with wound/want), **Architecture** (act spine + jaw-drop moments). "Plant this seed" creates NWVStory scaffold.
+
+- `POST /api/seed-chat` — streaming conversational responses with multi-turn history, phase-scoped prompts
+- `POST /api/seed-generate` — structured JSON generation for premise/cast/architecture tabs
+- Prompts in `lib/ai-prompts.ts`: `buildSeedChatSystem()`, `buildSeedGenerateSystem()`, `buildSeedGenerateUser()`
+
+### AI Co-Author
 
 Uses Claude Sonnet via `/api/ai/generate`. Five modes:
 - **voice** — generates Qwen TTS instruct prompt from voice concept (300 tokens)
@@ -181,9 +200,133 @@ Context builder (`lib/context-builder.ts`) does BFS from roots to build: ancestr
 
 ---
 
+## Code Quality Standards
+
+*Standing rules distilled from codebase reviews. Apply these in all new and modified code.*
+
+### Security
+- **Secrets**: API keys and tokens live only in `.env.local` (gitignored via `.env*`). Never hardcode or log them. Never spread `process.env` into subprocess `env` — pass an explicit whitelist (`PATH`, `HOME`, and only what the subprocess needs).
+- **Filename inputs**: Any user-supplied filename used in a server-side file operation must be validated with a strict regex before use. `path.basename()` alone is not sufficient. Example: `/^(tts|sfx|ambient|music)_[a-z0-9]{16}[a-z0-9_-]*\.(wav|mp3|json)$/.test(filename)`.
+- **Shell commands**: Never interpolate user-controlled or configurable values into shell strings. Use Node.js APIs (`net`, `fs`, `child_process` with argument arrays) instead of `exec()` with template strings.
+- **Colour values**: Before inserting any colour string into a CSS `style` attribute via `innerHTML`, validate with `/^#[0-9a-f]{6}$/i`. `escapeHtml()` on the text content is not enough.
+
+### Error Handling
+- **Don't swallow errors silently**: Every `catch {}` block must at minimum `console.error`. Prefer surfacing errors to the user for operations they initiated.
+- **Fire-and-forget only for non-critical persistence**: Timestamp saves, IDB caches, and speculative pre-generation may be fire-and-forget. Story persist (`store/story.ts`) must surface failures — if a PUT to `/api/stories/[id]` fails, the user should know.
+- **Type-narrow caught errors**: `catch (err)` → `if (err instanceof Error) console.error(err.message); else console.error(err)`. Never use `err.message` directly on `unknown`.
+
+### React & TypeScript
+- **Memoize expensive derivations**: Any function that traverses the full node/block graph (e.g. `storyToFlow()`) must be wrapped in `useMemo` with the correct dependency. Don't call it naked in render.
+- **Document intentional eslint-disable**: When disabling `react-hooks/exhaustive-deps` for a RAF loop or stable ref pattern, add a one-line comment explaining why (e.g. `// RAF attaches once; reads storyRef for latest data`).
+- **Unsafe casts**: `as unknown as X` is a code smell. If you need it, add a comment explaining why TypeScript can't infer correctly, and narrow the type at the boundary instead if possible.
+
+### Memory Leaks
+- Every `setInterval`, `setTimeout`, `addEventListener`, and RAF loop started inside a `useEffect` must be cleaned up in the effect's return function.
+- For intervals inside async IIFEs (e.g. playback loops): move the interval ID out of the IIFE so the `useEffect` cleanup can reach it. Or check `isMounted` at the top of the interval callback.
+
+### Daemon / Subprocess Paths
+- All server script paths and venv paths are rooted at `os.homedir() + 'Documents/Claude Projects/NodeWeaver/servers/'`. Follow the pattern established in `comfyui-daemon.ts`. Never hardcode paths from a previous project location.
+
+### Constants
+- Debounce timings, token limits, and other magic numbers belong in named constants, not inline literals. Prefer adding them to the relevant module (e.g. `DEBOUNCE_PERSIST` near the top of `store/story.ts`) rather than scattering them as bare numbers.
+
+---
+
+## Git Practices
+
+### Branch Strategy
+- `main` — stable, releasable only. Never commit directly.
+- `develop` — active integration branch. Day-to-day target.
+- `feature/<name>` — one branch per meaningful unit of work.
+
+Always branch from `develop`, merge back to `develop`.
+
+### Workflow
+```bash
+git checkout develop
+git checkout -b feature/<descriptive-name>
+# develop and test...
+git add -p                          # stage by hunk, not whole files
+git commit -m "type: description"
+git checkout develop
+git merge feature/<name> --no-ff
+git branch -d feature/<name>
+```
+
+### Commit Messages (Conventional Commits)
+Format: `type: short description`
+
+| Type | Use for |
+|------|---------|
+| `feat` | New feature or capability |
+| `fix` | Bug fix |
+| `refactor` | Code restructure, no behaviour change |
+| `chore` | Tooling, deps, config |
+| `docs` | Documentation only |
+| `wip` | Checkpoint commit mid-feature (squash before merge) |
+
+### Rules
+- Commit early and often within a feature branch — small, focused commits
+- Never commit generated assets (WAV files, build output, `.next/`)
+- Never commit `servers/venv/` or `servers/comfyui/` — both are gitignored
+- Use `git add -p` to review what you're staging — avoid accidental commits
+- Tag stable milestones: `git tag -a v0.x.0 -m "description"`
+- Push to remote regularly as off-site backup, even if working solo
+- Always verify no large binaries are staged before pushing to GitHub (100 MB limit)
+
+---
+
 ## Progress Log
 
 *Updated as work proceeds. Most recent first.*
+
+### Session 21 — 2026-03-20
+- **AI Tool Suite renaming** — Dropped "AI" from tool names. Full suite: Seed · Loom · Canopy · Graft (organic metaphor: plant → weave → watch → intervene)
+- **Seed UI rewrite** — Replaced single-phase wizard (`SeedAIModal.tsx`) with conversation-first tab model (`SeedModal.tsx`):
+  - **4 tabs**: Conversation | Premise | Cast | Architecture
+  - **Conversation tab** — freeform chat with phase-scoped system prompts (spark → premise → cast → architecture); suggestion chips via `[CHIPS: ...]` format; genre picker always visible; locked state indicators
+  - **Premise tab** — 3 structured premise cards ([who] wants [what] but [obstacle]), click to select and lock; regenerate button
+  - **Cast tab** — 2–4 character cards with name, role, wound, want; fully editable inline; add/remove characters
+  - **Architecture tab** — act spine (Early / Middle / Late columns) + jaw-drop moments (amber cards with position cycling); "Plant this seed" button
+  - **Tab dot indicators** — grey (not yet populated), green (done), primary (active)
+  - **Progressive disclosure** — structured tabs populate via dedicated generation calls, not extracted from chat
+- **New API routes**:
+  - **`/api/seed-chat/route.ts`** — streaming conversational endpoint; accepts `phase`, `history[]`, `locked` state, `message`; builds system prompt from phase instruction + locked state + persona rules
+  - **`/api/seed-generate/route.ts`** — structured JSON endpoint; accepts `type` (premises/cast/architecture), `conversationSummary`, `lockedState`; returns typed JSON
+- **New prompts** (`lib/ai-prompts.ts`):
+  - `buildSeedChatSystem()` — dynamic system prompt from phase + locked state + persona; phase instructions scope Claude to one job per phase
+  - `buildSeedGenerateSystem()` / `buildSeedGenerateUser()` — structured generation prompts for each tab type
+  - `SEED_PERSONA` — warm, direct tone; one question or one chip set per response; no craft terminology
+  - `SEED_PHASE_INSTRUCTIONS` — per-phase scoping rules (spark: feeling only; premise: stakes and obstacles; cast: wound/want gaps; architecture: emotional shape)
+- **Renaming across codebase**: `SeedAIModal` → `SeedModal`, `showSeedAI` → `showSeed`, `onSeedAI` → `onSeed`, `Seed AI` → `Seed` in all UI labels, toolbar titles, store messages
+- **Old `SeedAIModal.tsx` preserved** — kept for reference, no longer imported anywhere
+
+### Session 20 — 2026-03-18
+- **Test suite** — Full Vitest + Playwright setup, 76 tests passing (28 unit, 27 integration, 21 E2E):
+  - **`apps/designer/vitest.config.ts`** + **`playwright.config.ts`** — test runner config; Playwright `baseURL` on port 4000 (separate from dev :3001 and prod :3000)
+  - **`apps/designer/package.json`** — added `test:serve` (Next.js on :4000), `test:unit`, `test:integration`, `test:e2e`, `test:report` scripts; each writes its own JSON output file
+  - **`apps/designer/tests/`** — unit (`blocks`, `char-seed`, `constants`), integration (`api-stories`, `api-ai-generate`, `api-audio`, `api-tts`), E2E (`dashboard`, `node-editor`, `canvas`, `play-mode`) test suites
+  - **`apps/designer/scripts/generate-report.mjs`** — consolidates Vitest + Playwright JSON into `test-results/report.md`
+  - **`apps/designer/TESTING.md`** — full test documentation (stack, layout, prerequisites, run commands, troubleshooting)
+  - **`Run Tests.command`** + **`Test Server.command`** — double-click launchers at repo root; Run Tests auto-starts server on :4000 if not running, installs Playwright Chromium on first run, opens report on completion
+  - **`.claude/commands/test.md`** — `/test` slash command for running the suite from within Claude Code
+- **Security hardening** (from codebase review):
+  - **`src/app/api/stories/[id]/audio/route.ts`** — `safeAudioFilename()` regex whitelist, `export const config` body size limit (50 MB), MIME validation, atomic temp-file-then-rename writes
+  - **`src/app/api/stories/[id]/avatar/route.ts`** — `safeAvatarFilename()` regex, 10 MB limit, `image/png` MIME check, atomic writes
+  - **`src/app/api/avatar/generate/route.ts`** — `ALLOWED_COMFYUI_HOST` regex SSRF guard; rejects any non-localhost/LAN ComfyUI URL
+  - **`src/lib/comfyui-daemon.ts`** — subprocess `env` whitelisted to `PATH`, `HOME`, `PYTORCH_ENABLE_MPS_FALLBACK` only; removes wholesale `...process.env` inheritance
+  - **`src/lib/qwen-daemon.ts`** — same env whitelist applied; spawn failure logs underlying cause
+  - **`src/components/panels/NodeEditorPanel.tsx`** — SFX `linked.color` validated against `/^#[0-9a-f]{6}$/i` before CSS injection
+  - **`src/proxy.ts`** *(renamed from `middleware.ts`)* — `export default function proxy` satisfies Next.js 16 proxy convention; removes startup deprecation warning
+- **Code quality** (from codebase review):
+  - **`src/lib/ai-prompts.ts`** *(new)* — all 14 system prompts + 12 builder functions extracted from generate route; exports `buildSystemPrompt`, `buildUserMessage`, `NON_STREAMING_MODES`
+  - **`src/app/api/ai/generate/route.ts`** — shrunk from 841 lines to 110 lines (HTTP plumbing only); imports prompt builders from `lib/ai-prompts`
+  - **`src/lib/constants.ts`** *(new)* — `DEBOUNCE_PERSIST`, `DEBOUNCE_SPANS`, `AI_MAX_TOKENS`, `AI_MAX_TOKENS_DEFAULT`; already consumed by store and route
+  - **`packages/engine/src/types/index.ts`** — removed dead `kokoroVoice` and `kokoroSpeed` fields from `NWVCharacter` (0 usages since Session 4)
+  - **`src/lib/tts-player.ts`** — `scheduleBuffer` `catch {}` → `catch (err) { console.error(...) }`
+  - **`src/lib/audio-storage.ts`** — timestamp JSON parse `catch {}` → `console.warn` on corruption
+  - **`src/lib/voice-commands.ts`** — command JSON parse `catch {}` → `console.warn` on malformed AI response
+- **CLAUDE.md** — Future Ideas updated with full Canvas Direction + Narrative Quality + AI Tutor design session notes (canvas L→R spine, act columns, choice architecture tools, voice drift detector, tension curve visualiser, narrative health dashboard)
 
 ### Session 19 — 2026-03-18
 - **ComfyUI MPS fix** — Avatar generation was timing out with `BrokenPipeError: [Errno 32] Broken pipe` in the KSampler node on Apple Silicon:
@@ -430,10 +573,341 @@ Context builder (`lib/context-builder.ts`) does BFS from roots to build: ancestr
 
 *Captured during conversations. Not commitments.*
 
+---
+
+### Node Display & Canvas Cleanup
+
+Two connected improvements: what each node shows on the canvas, and how the canvas itself is organised and rendered. Both serve the same goal — the canvas is a navigation layer, not a reading layer.
+
+**1. Node Summary (AI-Drafted)**
+
+Each node displays a short AI-drafted summary at the top of the node editor instead of prose content or dialogue. This summary is also what renders on the canvas card.
+
+*Two summary fields:*
+
+| Field | Length | Used for |
+|-------|--------|----------|
+| `summary` | 6–10 words | Node card at mid/close zoom |
+| `label` | 2–3 words | Node card at far zoom |
+
+Both describe dramatic function, not prose content.
+- Good: `"Player discovers they were never alone"`
+- Bad: `"Elsie says she couldn't see anything from there"`
+
+*Generation behaviour:*
+- On node creation: empty, shows placeholder `"No summary yet — start writing or generate one"`
+- Generate Summary button fires a Claude API call on demand
+- Auto-regenerates silently on significant content change (debounced)
+- Manual edit locks auto-regen — indicated by a lock icon (🔒)
+- Lock can be toggled — unlocking re-enables auto-regen
+- Regenerate button always available regardless of lock state
+
+*API call:*
+```js
+const response = await fetch("https://api.anthropic.com/v1/messages", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 100,
+    system: `You are a narrative editor working on an interactive fiction project. Write concise directorial node summaries describing dramatic function — not prose content or dialogue. Respond with valid JSON only. No preamble or markdown.`,
+    messages: [{
+      role: "user",
+      content: `Generate a summary for this story node.
+
+Node type: ${nodeType}
+Node content: ${nodeContent}
+Recent story context (preceding spine nodes): ${recentContext}
+
+Respond with exactly:
+{
+  "summary": "6-10 word dramatic summary",
+  "label": "2-3 word canvas label"
+}`
+    }]
+  })
+});
+
+const data = await response.json();
+const text = data.content.find(b => b.type === "text")?.text ?? "";
+const { summary, label } = JSON.parse(text);
+```
+
+*Context packet (pass into every call):*
+- `nodeType` — STORY / TWIST / CHAT / END etc.
+- `nodeContent` — full prose and dialogue of the node
+- `recentContext` — summaries of the 3 preceding spine nodes (not full prose)
+
+*Node editor UI:*
+```
+┌─────────────────────────────────────────────────┐
+│ STORY  draft                          [ × close ]│
+├─────────────────────────────────────────────────┤
+│ SUMMARY                                    ✎ 🔒 │
+│ ┌─────────────────────────────────────────────┐ │
+│ │ Player discovers they were never alone      │ │
+│ └─────────────────────────────────────────────┘ │
+│                          [ ↺ Regenerate summary ]│
+├─────────────────────────────────────────────────┤
+│ Node content / prose editor below...            │
+```
+
+*Error handling:*
+- API failure: keep existing summary, show subtle retry option
+- JSON parse failure: extract first sentence of response as fallback
+- Never clear an existing summary on a failed regeneration
+
+*Data model additions:*
+```ts
+interface NodeData {
+  summary: string;
+  label: string;
+  summaryLocked: boolean;
+  summaryGeneratedAt: Date;
+}
+```
+
+---
+
+**2. Canvas Visual Cleanup**
+
+*Layout direction: Top-to-Bottom → Left-to-Right with spine*
+- Spine runs horizontally left to right through act columns
+- Branches diverge above or below the spine, always within the same act column
+- Branches reconnect before act boundaries — nothing spans columns unresolved
+- All node exits from right edge only, all entries from left edge only
+- No line crossings within an act column
+
+```
+| ACT 1           | ACT 2               | ACT 3         |
+|                 |    ○ branch above   |               |
+| ○ ────────────► | ○ ──────────────── ►| ○ ──────────► |
+|                 |    ○ branch below   |               |
+```
+
+*Node dimensions — standardised:*
+```
+Width:         240px fixed (all node types)
+Height:        72px collapsed (fixed default)
+Height:        auto on expand (author-triggered only)
+Border radius: 8px
+```
+Every node is the same size. Always. Content truncates. The canvas is never a reading surface.
+
+*Node type — left border stripe replaces badges:*
+
+| Node Type | Colour | Hex |
+|-----------|--------|-----|
+| START | Green | `#4ADE80` |
+| STORY | Teal | `#2DD4BF` |
+| TWIST | Purple | `#A78BFA` |
+| CHAT | Blue | `#60A5FA` |
+| END | Orange | `#FB923C` |
+
+- Draft state: border stripe at 60% opacity, background slightly desaturated
+- Complete state: full colour stripe, clean background
+- No separate status badge needed
+
+*Collapsed node shows only:*
+- Summary (or label at far zoom)
+- Emotional beat tag (small, bottom-left)
+- Type communicated via border stripe
+
+*Collapsed node does NOT show:*
+- Prose content, dialogue lines, speaker labels, character names
+
+*Connection lines:*
+
+Routing:
+- Branches above spine curve gently upward, never crossing downward branches
+- Auto-layout enforces no crossings within act columns
+
+Line weight:
+- Spine connections: 3px solid
+- Branch connections: 1.5px solid
+- Converging (returning to spine): 1.5px dashed
+
+Choice label pills:
+- Sit centred on the connection line — not floating near nodes
+- Pill style: dark background, light text, font-size 11px
+- Truncate at 32 characters, full label on hover
+
+*Zoom-dependent rendering:*
+
+| Zoom | Node shows | Lines |
+|------|-----------|-------|
+| Close (>80%) | Summary + beat tag + type icon | Full weight + choice pills |
+| Mid (40–80%) | Summary only | Full weight + choice pills |
+| Far (15–40%) | Label (2–3 words) only | Simplified, no pills |
+| Very far (<15%) | Type colour block only | Thin lines, no labels |
+
+*Hover & selection behaviour:*
+- Node hover: non-connected nodes and lines dim to 20% opacity, connected path stays full brightness
+- Node select: focus ring in type colour, connected path full brightness, all else at 20%
+- Line hover: highlights to source node type colour, choice pill expands to full label
+
+*Emotional beat tag:*
+
+Small coloured dot + lowercase label, bottom-left of collapsed node.
+
+| Beat | Label | Dot colour |
+|------|-------|-----------|
+| Setup | `setup` | Grey |
+| Escalation | `escalation` | Yellow |
+| Peak | `peak` | Red |
+| Reversal | `reversal` | Purple |
+| Release | `release` | Green |
+| Cliffhanger | `cliffhanger` | Orange |
+| Breathing room | `breath` | Blue |
+
+Author-assigned or AI-suggested. Feeds the tension curve visualiser.
+
+*Act columns:*
+- Very subtle background tint per column
+- Column header pinned at top of viewport while scrolling: `"ACT 1 — SETUP"` etc.
+- Single 1px vertical rule at column boundary, opacity: 0.15
+
+*Canvas background:*
+- Subtle dot grid, opacity: 0.3
+- Grid spacing matches node rhythm
+- Dark mode default
+
+*Data model additions:*
+```ts
+interface NodeVisual {
+  beatTag: 'setup' | 'escalation' | 'peak' | 'reversal' | 'release' | 'cliffhanger' | 'breath';
+  isExpanded: boolean;
+  actColumn: number;
+  spineNode: boolean;
+}
+
+interface EdgeVisual {
+  routeAboveSpine: boolean;
+  choiceLabel: string;
+  choiceLabelFull: string;
+  isSpineConnection: boolean;
+}
+```
+
+*Implementation Priority:*
+1. Fix node dimensions — uniform width/height, biggest immediate scannability win, minimal effort
+2. Replace type badges with left border stripe — cleaner visual hierarchy
+3. Left-to-right layout with act columns — structural foundation
+4. Move choice labels onto lines as pills — eliminates floating label noise
+5. AI summary generation — replaces prose preview with dramatic function label
+6. Zoom-dependent rendering tiers — canvas readable at any distance
+7. Hover dimming behaviour — path tracing without moving anything
+8. Emotional beat tag system — feeds tension curve visualiser
+9. Act column tinting and pinned headers — spatial anchoring
+
+---
+
+### Canvas Direction & Narrative Quality (Design Session)
+
+**1. Canvas Direction Change: Top-to-Bottom → Left-to-Right with Central Spine**
+
+Reorient the node canvas from vertical flow to horizontal flow with a central spine running left to right.
+
+*Spine model:*
+- A single clearly marked critical path runs left to right — the backbone of the story
+- All branches diverge above or below the spine and must converge back within the same act column
+- Branches that never rejoin the spine are flagged automatically
+- The spine is architecturally distinct (distinct visual weight, colour, or layer)
+
+*Act columns:*
+- Replace current vertical lanes with vertical act columns — e.g. `ACT 1 | ACT 2 | ACT 3 | ACT 4`
+- The spine passes through each act column left to right
+- Branches live inside act columns, never spanning act boundaries unresolved
+- Act boundaries act as gates — nothing crosses unresolved
+- Existing lane logic is ~70% of the way there; this is primarily a reframe
+
+*Zoom-dependent rendering:*
+- Macro view: collapsed act clusters, spine visible, branch density readable at a glance
+- Micro view: individual nodes with full detail
+- Zoom level determines which representation renders
+
+**2. Multiple Simultaneous Views (Same Underlying Data)**
+
+| View | Purpose | Author Role |
+|------|---------|------------|
+| Outline view | Story development, beat planning | Writer |
+| Node/graph view | Branch logic, state flags, connections | Designer |
+| Timeline/tension view | Pacing, emotional curve | Director |
+| Playtest view | Linear experience simulation | Player |
+
+The existing Focus Mode is the foundation of the Outline/Writer view — extend, not replace.
+
+**3. Narrative Quality Tooling**
+
+*3.1 Choice Architecture Tools:*
+- **Consequence graph analyser** — overlay highlighting "dead" choices: branches that reconverge too quickly or never get referenced downstream
+- **Choice weight scoring panel** — tag each choice with stakes (low/medium/high), moral dimension (yes/no), payoff distance (nodes until this matters); warn if consecutive choices score low across all three
+- **Branch coverage heatmap** — playtest simulation running N random paths, visualising nodes hit rarely or never
+- **30-node rule enforcement** — warn when a player can travel more than 30 nodes without hitting a spine beat
+
+*3.2 Character Voice Consistency:*
+- **Per-character voice bible editor** — structured sidebar per character: vocabulary used/never used, sentence length, emotional register, speech tics; feeds directly into AI generation prompts
+- **Voice drift detector** — post-generation Claude API call scoring each line against the character's voice bible, flagging outliers with a confidence score (e.g. "This line sounds 60% like Kira, 40% like Narrator — review?")
+- **Dialogue diff view** — side-by-side old vs. new on regeneration, with character voice deltas highlighted
+
+*3.3 Pacing & Tension Tools:*
+- **Tension curve visualiser** — tag each node with an emotional beat (calm / rising tension / peak / reversal / release / cliffhanger); render as a waveform across a linear playthrough; compare against a user-defined target curve per episode
+- **Word/beat budget tracker** — per scene, track estimated reading/listening time; warn when a sequence exceeds threshold without a player decision or audio beat change
+- **Act structure overlay** — canvas layer marking cold open, act breaks, and climax nodes
+- **"Yes, and / Yes, but / No, but" tagger** — tag each node exit with its improv/TV pattern; surface flat "yes, and" chains that indicate low-tension sequences
+- **ABCD beat checker** — for each scene, validate presence of: A (main tension driver), B (character/emotional thread), C (something changes), D (what pulls the player forward)
+
+*3.4 AI Generation Quality:*
+- **Context packet builder** — before any AI generation call, automatically assemble: last N significant player choices, active character relationship states, world state flags, relevant voice bibles, planned jaw-dropping beats. Highest-leverage single feature for generation quality.
+- **Causality prompt enforcer** — generation mode that requires the AI to state why this scene follows from the previous one (because/therefore logic) before writing; strips reasoning from output but uses it for coherence validation
+- **Regeneration with constraints** — structured partial regen modes: "keep the plot, rewrite the voice" / "keep the voice, raise the stakes" / "make this choice feel harder"
+- **Consistency checker node** — special non-rendering node type that fires a Claude API call at playtest time, feeding surrounding context and asking "does this scene contradict anything established earlier?"
+
+*3.5 Blind Mode / Audio QA:*
+- **Audio-only preview mode** — strip all visual context and play a scene with TTS only, inside NodeWeaver; mandatory QA step before shipping
+- **Ambiguity linter** — flag lines containing visual references ("the red door", "you can see", "on the left") that are meaningless in blind mode
+
+**4. Graft (Narrative Tutor)**
+
+Philosophy: the tutor operates as a dramaturg, not a generator. It asks questions, surfaces structural weaknesses, and offers options — it does not decide. Keeps the author's voice intact while providing professional-level structural guidance.
+
+*Features:*
+- **"What if" suggester** — at any node, offer 4–5 dramatically distinct one-sentence direction options, each tagged by dramatic function: Betrayal / Revelation / Escalation / Breathing room / Complication
+- **Socratic story coach** — asks structural questions rather than suggesting content (e.g. "You haven't established why the player should care about this character yet — what do you want them to feel here?")
+- **"Earn it" checker** — for each planned jaw-dropping moment, review preceding nodes and assess whether setup earns the payoff; flags underearned beats with specific references to what's missing
+- **Dramatic function gap detector** — analyses the current act and identifies what's structurally absent (e.g. "You have strong setup and a peak but no reversal before the act break")
+- **"Stranger test" prompt** — for each jaw-dropping moment, evaluate: would a stranger knowing nothing else feel something here?
+
+*Integration point:* Focus Mode text editor — a sidebar aware of graph position, surrounding nodes, and context packet. Not autocomplete; a well-read colleague.
+
+**5. Narrative Health Dashboard**
+
+A single per-episode quality scorecard aggregating:
+- Choice depth score
+- Tension curve vs. target
+- Voice consistency warnings
+- Blind mode coverage %
+- Consequence graph dead-branch count
+- ABCD beat completion rate
+
+Embeds editorial quality into the tool so future authors get guardrails by default.
+
+**Implementation Priority Suggestion:**
+1. Canvas reorientation (L→R spine + act columns) — structural foundation
+2. Focus Mode Graft panel — highest authoring value, leverages existing mode
+3. Emotional beat tagging + tension curve visualiser — makes the canvas readable
+4. Context packet builder — unlocks quality AI generation and tutor features
+5. Voice bible editor + drift detector — protects character consistency at scale
+6. Narrative health dashboard — synthesis layer, built last when sub-components exist
+
+---
+
 - ~~AI Sound FX / Audio Generation~~ — **Implemented in Session 2**
 - ~~Audio WAV→MP3 compression~~ — **Implemented in Session 11**
 - **ZIP export bundling** — Bundle `.nwv` + `_audio/` folder into a single ZIP for browsers without File System Access API.
 - ~~Inspire Me~~ — **Implemented** (dashboard AI story concept generator with Quick Start / Write It Myself exits)
+
+- **Inspire Me — Movie Trailer Narrator** — After the AI generates a story concept on the Inspire Me screen, a narrator automatically reads it aloud in a low, cinematic movie trailer voice before the user makes a choice. Uses the local Qwen TTS server with a specific `qwenInstruct` voice prompt (e.g. `"Deep, resonant male narrator voice. Movie trailer register. Slow, deliberate pacing. Gravitas."`) and a low voice seed. Should auto-trigger on concept reveal with no play button required — the concept text fades in while the narration plays. A subtle "▶ Replay" button replays on demand. Implementation: fire a `/api/qwen/speak` request with the full concept text and the narrator instruct on `onConceptGenerated`; stream audio via `TTSPlayer`; animate the concept text in sync.
 
 - **iOS Player App** — Subscription iOS app delivering NodeWeaver-produced interactive stories to players. Architecture: thin native Swift shell (WKWebView wrapper) + NodeWeaver web player (TypeScript/React, CC maintains). Native shell handles App Store presence, StoreKit 2 subscriptions, push notifications, app lifecycle. Web player handles story playback, VFX pipeline, audio pipeline (pre-generated WAVs), character portraits. Monetisation: free tier (2–3 starter stories), subscription unlocks all content + future episodes; episodic release cadence. Story delivery: bundled assets or on-demand download from server; subscription state passed from Swift shell into web layer. Testing workflow: iOS Simulator (free, ships with Xcode) → direct Xcode install (plug in device, instant) → TestFlight (hours review) → App Store (1–7 days first, 24–48h updates). Apple Developer Program ($99/year) required for device testing + submission. Apple takes 30% (15% after year one). Open questions: bundled vs. on-demand stories; price point; iPhone/iPad/universal; rotating vs. fixed free tier.
 
@@ -453,7 +927,7 @@ Context builder (`lib/context-builder.ts`) does BFS from roots to build: ancestr
 
 - **Live Narrative Simulation (Story Debugger)** — A "debug mode" overlay on the canvas that simulates a player walk-through in real time: active node glows, visited nodes dim to indicate they've been seen, chosen edges highlight in a traced path colour, hover over a node to see "reachable from X paths, visited Y times in Z playthroughs" stats. Run multiple simultaneous trace paths to visualize branching coverage. Helps writers identify unreachable nodes, dead ends, and overly linear sections.
 
-- **AI Story Co-Pilot** — Persistent side panel or floating widget with graph-aware structural advice. Analyses the full story graph and flags: long linear runs with no branches ("consider a choice here"), nodes with too many choices (decision fatigue), unreachable orphan nodes, missing end nodes on branches, low twist density by act. Also proactively suggests where to place a twist or introduce a character callback. Different from the per-node AI assist — this is story-level structural intelligence.
+- **Canopy (Story Co-Pilot)** — Persistent side panel or floating widget with graph-aware structural advice. Analyses the full story graph and flags: long linear runs with no branches ("consider a choice here"), nodes with too many choices (decision fatigue), unreachable orphan nodes, missing end nodes on branches, low twist density by act. Also proactively suggests where to place a twist or introduce a character callback. Different from the per-node Loom — this is story-level structural intelligence.
 
 - **Audio-Driven Storytelling / Listen Mode** — An enhanced PlayMode variant where the story is presented as an interactive audio drama: ambient sound fades in before narration begins, music layers under dialogue, choices are read aloud by a neutral voice, user selects by voice or tap. Optimised for eyes-closed listening (phone in pocket / accessibility use case). Separate "Listen Mode" button in the story header alongside the existing Play button.
 
@@ -612,3 +1086,5 @@ After `mkcert -install`, restart the dev server. The server now runs at `https:/
 ## Known Bugs
 
 - **Voice on iPad over LAN** — Resolved once mkcert CA is trusted on iPad (see Pending Setup above). After iPad trust is set up, voice mode works at `https://192.168.86.23:3000`.
+
+- ~~**`middleware` deprecation warning on dev server start**~~ — Fixed in Session 20: renamed `src/middleware.ts` → `src/proxy.ts`.

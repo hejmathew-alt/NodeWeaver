@@ -67,6 +67,7 @@ export function AVFXPlayView({ story }: AVFXPlayViewProps) {
   const playingForNodeRef = useRef<string | null>(null);
   const blockStartTimeRef = useRef<number>(0);
   const blockBaseMsRef = useRef<number>(0);
+  const playheadIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // VFX rendering refs
   const vfxContentRef = useRef<HTMLDivElement | null>(null);
@@ -104,6 +105,17 @@ export function AVFXPlayView({ story }: AVFXPlayViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [avfxNodeId]);
 
+  // Unmount cleanup — clear playhead interval if component unmounts mid-playback
+  useEffect(() => {
+    return () => {
+      if (playheadIntervalRef.current !== null) {
+        clearInterval(playheadIntervalRef.current);
+        playheadIntervalRef.current = null;
+      }
+      playerRef.current?.dispose();
+    };
+  }, []);
+
   const stopAll = useCallback(() => {
     playerRef.current?.dispose();
     playerRef.current = null;
@@ -128,13 +140,13 @@ export function AVFXPlayView({ story }: AVFXPlayViewProps) {
     let acc = 0;
     for (const d of blockDurations) { blockStarts.push(acc); acc += d; }
 
-    const intervalId = setInterval(() => {
+    playheadIntervalRef.current = setInterval(() => {
       setAvfxPlayheadMs(blockBaseMsRef.current + (Date.now() - blockStartTimeRef.current));
     }, 80);
 
     (async () => {
       for (let i = 0; i < blocks.length; i++) {
-        if (player.stopped) { clearInterval(intervalId); setAvfxPlayheadMs(0); return; }
+        if (player.stopped) { clearInterval(playheadIntervalRef.current ?? undefined); playheadIntervalRef.current = null; setAvfxPlayheadMs(0); return; }
         setProgress(`${i + 1}/${blocks.length}`);
         setActiveBlockIdx(i);
         blockBaseMsRef.current = blockStarts[i];
@@ -155,9 +167,10 @@ export function AVFXPlayView({ story }: AVFXPlayViewProps) {
             voiceTexture: block.voiceTexture,
           });
         }
-        if (!ok) { clearInterval(intervalId); setAvfxPlayheadMs(0); return; }
+        if (!ok) { clearInterval(playheadIntervalRef.current ?? undefined); playheadIntervalRef.current = null; setAvfxPlayheadMs(0); return; }
       }
-      clearInterval(intervalId);
+      clearInterval(playheadIntervalRef.current ?? undefined);
+      playheadIntervalRef.current = null;
       if (player.stopped) { setAvfxPlayheadMs(0); return; }
       setPlayingNodeId(null);
       setActiveBlockIdx(-1);

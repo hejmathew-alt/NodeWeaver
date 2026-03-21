@@ -128,8 +128,8 @@ export function CanvasPlayer({ story }: CanvasPlayerProps) {
         if (!char || !block.text) continue;
 
         let ok: boolean;
-        if (char.ttsProvider === 'elevenlabs' && char.elVoiceId && elevenLabsKey) {
-          ok = await playElBlock(block.text, char.elVoiceId, elevenLabsKey, player, elAudioRef);
+        if (char.ttsProvider === 'elevenlabs' && char.elevenLabsVoiceId && elevenLabsKey) {
+          ok = await playElBlock(block.text, char.elevenLabsVoiceId, elevenLabsKey, player, elAudioRef);
         } else {
           ok = await player.playLine(block.text, char, {
             emotion: block.emotion,

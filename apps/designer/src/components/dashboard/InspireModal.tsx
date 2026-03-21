@@ -98,13 +98,14 @@ function layoutNodes(nodes: NWVNode[]): NWVNode[] {
     if (!byLevel.has(level)) byLevel.set(level, []);
     byLevel.get(level)!.push(id);
   }
-  const NODE_W = 340, NODE_H = 230;
+  const NODE_W = 480, NODE_H = 320;
   return nodes.map((n) => {
     const level = levels.get(n.id) ?? 0;
     const siblings = byLevel.get(level) ?? [n.id];
     const idx = siblings.indexOf(n.id);
-    const totalW = siblings.length * NODE_W;
-    return { ...n, position: { x: idx * NODE_W - totalW / 2 + NODE_W / 2 + 600, y: level * NODE_H + 80 } };
+    const totalH = siblings.length * NODE_H;
+    // L→R layout: x encodes depth (spine), y encodes sibling spread (branching)
+    return { ...n, position: { x: level * NODE_W + 80, y: idx * NODE_H - totalH / 2 + NODE_H / 2 + 400 } };
   });
 }
 
@@ -112,7 +113,7 @@ function hydrateStory(raw: Record<string, unknown>, genre: GenreSlug): NWVStory 
   const id = `story-${Date.now()}`;
   const now = new Date().toISOString();
   const meta = (raw.metadata ?? {}) as Record<string, unknown>;
-  const rawNodes = ((raw.nodes as NWVNode[]) ?? []).map((n) => ({ audio: [], lanes: [], ...n }));
+  const rawNodes = ((raw.nodes as NWVNode[]) ?? []).map((n) => ({ ...n, audio: n.audio ?? [], lanes: n.lanes ?? [] }));
   return {
     version: '1.0', id,
     metadata: {
@@ -164,7 +165,7 @@ function buildSkeletonStory(concept: Concept, genre: GenreSlug): NWVStory {
       status: 'draft',
       audio: [],
       lanes: [],
-      position: { x: 600, y: 80 },
+      position: { x: 80, y: 400 },
     },
     {
       id: n2Id,
@@ -177,7 +178,7 @@ function buildSkeletonStory(concept: Concept, genre: GenreSlug): NWVStory {
       status: 'draft',
       audio: [],
       lanes: [],
-      position: { x: 260, y: 320 },
+      position: { x: 420, y: 285 },
     },
     {
       id: n3Id,
@@ -190,7 +191,7 @@ function buildSkeletonStory(concept: Concept, genre: GenreSlug): NWVStory {
       status: 'draft',
       audio: [],
       lanes: [],
-      position: { x: 940, y: 320 },
+      position: { x: 420, y: 515 },
     },
   ];
 
@@ -396,7 +397,7 @@ export function InspireModal({ onClose, onStoriesChanged, existingTitles = [] }:
         onStoriesChanged={onStoriesChanged}
       />
     )}
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
       <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">

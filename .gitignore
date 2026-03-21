@@ -7,5 +7,6 @@ dist/
 
 # AI servers — ComfyUI source (cloned by setup-comfyui.sh)
 servers/comfyui/
-# Python venv
+# Python venvs
 servers/venv/
+servers/qwen_venv/

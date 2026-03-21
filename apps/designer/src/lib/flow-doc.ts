@@ -16,7 +16,7 @@
  * Nodes are separated by blank lines. Start/End nodes are omitted.
  */
 
-import type { NWVStory, NWVNode, NodeType } from '@nodeweaver/engine';
+import type { NWVStory, NWVNode, NWVChoice, NodeType } from '@nodeweaver/engine';
 import { nanoid } from 'nanoid';
 
 // ── storyToFlow ───────────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ export function storyToFlow(story: NWVStory): string {
 interface ApplyActions {
   createNode:        (type: NodeType, position?: { x: number; y: number }) => string;
   updateNode:        (id: string, patch: Partial<NWVNode>) => void;
-  updateChoice:      (nodeId: string, choiceId: string, patch: Partial<{ label: string; next: string | null }>) => void;
+  updateChoice:      (nodeId: string, choiceId: string, patch: Partial<NWVChoice>) => void;
   addCharacterNamed: (name: string) => string;
 }
 
@@ -238,7 +238,7 @@ export async function applyFlowToStory(
       choices.forEach((c, i) => {
         const existChoice = existChoices[i];
         if (existChoice) {
-          updateChoice(currentNodeId!, existChoice.id, { label: c.label, next: c.next });
+          updateChoice(currentNodeId!, existChoice.id, { label: c.label, next: c.next ?? undefined });
         }
         // New choices beyond existing count are not created here — the writer
         // uses the node editor for adding choices; FlowEditor edits existing ones.

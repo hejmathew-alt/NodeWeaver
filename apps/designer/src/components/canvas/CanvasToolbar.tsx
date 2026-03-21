@@ -13,7 +13,6 @@ const NODE_BUTTONS: {
   { type: 'end',    label: '+ End',    colour: '#f97316', hoverBg: 'hover:bg-orange-50' },
   { type: 'story',  label: '+ Story',  colour: '#3b82f6', hoverBg: 'hover:bg-blue-50' },
   { type: 'combat', label: '+ Interactive', colour: '#ef4444', hoverBg: 'hover:bg-red-50' },
-  { type: 'chat',   label: '+ Chat',   colour: '#22c55e', hoverBg: 'hover:bg-green-50' },
   { type: 'twist',  label: '+ Twist',  colour: '#a855f7', hoverBg: 'hover:bg-purple-50' },
 ];
 
@@ -22,13 +21,12 @@ interface CanvasToolbarProps {
   onFlowMode?: () => void;
   worldPanelOpen?: boolean;
   onToggleWorld?: () => void;
-  lanesPanelOpen?: boolean;
-  onToggleLanes?: () => void;
   avfxMode?: boolean;
   onToggleAVFX?: () => void;
+  onSeed?: () => void;
 }
 
-export function CanvasToolbar({ flowMode = false, onFlowMode, worldPanelOpen = false, onToggleWorld, lanesPanelOpen = false, onToggleLanes, avfxMode = false, onToggleAVFX }: CanvasToolbarProps) {
+export function CanvasToolbar({ flowMode = false, onFlowMode, worldPanelOpen = false, onToggleWorld, avfxMode = false, onToggleAVFX, onSeed }: CanvasToolbarProps) {
   const createNode = useStoryStore((s) => s.createNode);
   const activeView = useStoryStore((s) => s.activeView);
   const setActiveView = useStoryStore((s) => s.setActiveView);
@@ -62,26 +60,6 @@ export function CanvasToolbar({ flowMode = false, onFlowMode, worldPanelOpen = f
         </button>
       )}
 
-      {onToggleLanes && (
-        <button
-          onClick={onToggleLanes}
-          className="flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-sky-50"
-          style={{
-            color: lanesPanelOpen ? '#fff' : '#0369a1',
-            border: '1px solid #0369a155',
-            backgroundColor: lanesPanelOpen ? '#0369a1' : undefined,
-          }}
-          title="Story Lanes — group nodes into parallel narrative threads"
-        >
-          <svg width="11" height="11" viewBox="0 0 14 14" fill="currentColor" className="shrink-0">
-            <rect x="1" y="1" width="3" height="12" rx="1"/>
-            <rect x="5.5" y="1" width="3" height="12" rx="1"/>
-            <rect x="10" y="1" width="3" height="12" rx="1"/>
-          </svg>
-          Lanes
-        </button>
-      )}
-
       {onToggleAVFX && (
         <button
           onClick={onToggleAVFX}
@@ -95,6 +73,18 @@ export function CanvasToolbar({ flowMode = false, onFlowMode, worldPanelOpen = f
         >
           <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2 10V5l4-2 4 2v5"/><circle cx="6" cy="11" r="1.5"/><circle cx="10" cy="10" r="1.5"/><line x1="6" y1="9.5" x2="10" y2="8.5"/></svg>
           Audio Visual FX
+        </button>
+      )}
+
+      {onSeed && (
+        <button
+          onClick={onSeed}
+          className="flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors hover:bg-emerald-50"
+          style={{ color: '#059669', border: '1px solid #05966955' }}
+          title="Seed — grow a story from a single idea"
+        >
+          <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="13" x2="7" y2="7"/><path d="M7 10C5 8 3 8 3 5C5 5 7 7 7 10"/><path d="M7 10C9 8 11 8 11 5C9 5 7 7 7 10"/></svg>
+          Seed
         </button>
       )}
 

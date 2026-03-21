@@ -96,9 +96,20 @@ export class SFXPlayer {
   // ── Control ───────────────────────────────────────────────────────────────
 
   stop(): void {
-    for (const source of this.activeSources) {
-      try { source.stop(); } catch { /* already stopped */ }
-      try { source.disconnect(); } catch { /* already disconnected */ }
+    if (this.ctx && this.gainNode && this.ctx.state === 'running' && this.activeSources.length > 0) {
+      // Ramp gain to 0 over 50ms to avoid a pop from abruptly cutting audio
+      const g = this.gainNode.gain;
+      g.cancelScheduledValues(this.ctx.currentTime);
+      g.setValueAtTime(g.value, this.ctx.currentTime);
+      g.linearRampToValueAtTime(0, this.ctx.currentTime + 0.05);
+      for (const source of this.activeSources) {
+        try { source.stop(this.ctx.currentTime + 0.06); } catch { /* already stopped */ }
+      }
+    } else {
+      for (const source of this.activeSources) {
+        try { source.stop(); } catch { /* already stopped */ }
+        try { source.disconnect(); } catch { /* already disconnected */ }
+      }
     }
     this.activeSources = [];
   }

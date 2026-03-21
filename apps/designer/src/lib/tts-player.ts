@@ -1,9 +1,59 @@
 /**
  * Shared TTS player — used by both the node editor panel and PlayMode.
  * Streams audio from the local Qwen TTS server via Web Audio API.
+ *
+ * Uses direct PCM→AudioBuffer creation instead of decodeAudioData to avoid
+ * per-chunk resampling artifacts (clicks at chunk boundaries).
  */
 import { charSeed } from './char-seed';
 import type { NWVCharacter } from '@nodeweaver/engine';
+
+// ── WAV header parsing ──────────────────────────────────────────────────────
+
+/** Extract sample rate, channels, and bits-per-sample from a WAV header. */
+function parseWavHeader(buf: ArrayBuffer) {
+  const view = new DataView(buf);
+  return {
+    channels: view.getUint16(22, true),
+    sampleRate: view.getUint32(24, true),
+    bitsPerSample: view.getUint16(34, true),
+  };
+}
+
+/** Convert WAV ArrayBuffer to a Float32Array of PCM samples (skip header). */
+function wavToFloat32(buf: ArrayBuffer): { samples: Float32Array; sampleRate: number; channels: number } {
+  const { channels, sampleRate, bitsPerSample } = parseWavHeader(buf);
+
+  // Find the 'data' chunk — usually at byte 44 but not guaranteed
+  const bytes = new Uint8Array(buf);
+  let dataOffset = 12; // skip RIFF header
+  while (dataOffset + 8 < bytes.length) {
+    const id = String.fromCharCode(bytes[dataOffset], bytes[dataOffset + 1], bytes[dataOffset + 2], bytes[dataOffset + 3]);
+    const chunkSize = new DataView(buf, dataOffset + 4).getUint32(0, true);
+    if (id === 'data') {
+      dataOffset += 8; // skip 'data' + size
+      break;
+    }
+    dataOffset += 8 + chunkSize;
+  }
+
+  const pcmBytes = new Uint8Array(buf, dataOffset);
+
+  if (bitsPerSample === 16) {
+    const int16 = new Int16Array(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength >> 1);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+      float32[i] = int16[i] / 32768;
+    }
+    return { samples: float32, sampleRate, channels };
+  }
+
+  // Fallback for other bit depths — shouldn't happen with our server
+  const float32 = new Float32Array(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength >> 2);
+  return { samples: float32, sampleRate, channels };
+}
+
+// ── TTSPlayer ───────────────────────────────────────────────────────────────
 
 export class TTSPlayer {
   private audioCtx: AudioContext | null = null;
@@ -13,6 +63,8 @@ export class TTSPlayer {
   private lastEnded: Promise<void> = Promise.resolve();
   private streamCtrl: AbortController | null = null;
   private _abort = { stop: false };
+  /** Sample rate from the first received WAV chunk — used to create a matched AudioContext. */
+  private sourceSampleRate: number | null = null;
 
   /**
    * Called once per playLine() — fires with the real-world ms timestamp at which
@@ -43,9 +95,22 @@ export class TTSPlayer {
   stop() {
     this._abort.stop = true;
     this.streamCtrl?.abort();
-    this.activeNodes.forEach((n) => {
-      try { n.stop(); } catch {}
-    });
+    // Ramp gain to 0 over 10ms to avoid a pop from abruptly cutting audio
+    if (this.masterGain && this.audioCtx && this.audioCtx.state === 'running') {
+      const ctx = this.audioCtx;
+      const gain = this.masterGain.gain;
+      gain.cancelScheduledValues(ctx.currentTime);
+      gain.setValueAtTime(gain.value, ctx.currentTime);
+      gain.linearRampToValueAtTime(0, ctx.currentTime + 0.01);
+      // Stop sources after the ramp completes
+      this.activeNodes.forEach((n) => {
+        try { n.stop(ctx.currentTime + 0.015); } catch {}
+      });
+    } else {
+      this.activeNodes.forEach((n) => {
+        try { n.stop(); } catch {}
+      });
+    }
     this.activeNodes = [];
     this.scheduledEnd = 0;
   }
@@ -56,6 +121,7 @@ export class TTSPlayer {
     if (this.audioCtx && this.audioCtx.state !== 'closed') {
       this.audioCtx.close();
       this.audioCtx = null;
+      this.sourceSampleRate = null;
     }
   }
 
@@ -65,13 +131,21 @@ export class TTSPlayer {
     this._abort = { stop: false };
     const ctx = this.getCtx();
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    // Cancel any lingering ramps, then fade in over 5ms
+    const gain = this.masterGain!.gain;
+    gain.cancelScheduledValues(ctx.currentTime);
+    gain.setValueAtTime(0, ctx.currentTime);
+    gain.linearRampToValueAtTime(1, ctx.currentTime + 0.005);
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
   private getCtx(): AudioContext {
     if (!this.audioCtx || this.audioCtx.state === 'closed') {
-      this.audioCtx = new AudioContext();
+      // Create AudioContext at the source sample rate if known — this avoids
+      // per-chunk resampling which causes boundary clicks.
+      const opts = this.sourceSampleRate ? { sampleRate: this.sourceSampleRate } : undefined;
+      this.audioCtx = new AudioContext(opts);
       this.masterGain = this.audioCtx.createGain();
       this.masterGain.connect(this.audioCtx.destination);
       this.scheduledEnd = 0;
@@ -81,26 +155,58 @@ export class TTSPlayer {
     return this.audioCtx;
   }
 
-  private async scheduleBuffer(arrayBuffer: ArrayBuffer): Promise<void> {
-    const ctx = this.getCtx();
-    // Resume suspended context — can happen when AudioContext is created outside
-    // the user-gesture call stack (e.g. after a React state-update re-render).
-    if (ctx.state === 'suspended') { try { await ctx.resume(); } catch {} }
+  /**
+   * Parse WAV, create AudioBuffer directly from PCM samples, and schedule.
+   * Bypasses decodeAudioData to avoid per-chunk resampling artifacts.
+   */
+  private scheduleBuffer(arrayBuffer: ArrayBuffer): void {
     try {
-      const buf = await ctx.decodeAudioData(arrayBuffer);
+      const { samples, sampleRate, channels } = wavToFloat32(arrayBuffer);
+
+      // On the first chunk, check if we need to recreate the AudioContext
+      // at the source sample rate to avoid resampling entirely.
+      if (this.sourceSampleRate === null) {
+        this.sourceSampleRate = sampleRate;
+        if (this.audioCtx && this.audioCtx.sampleRate !== sampleRate) {
+          // Recreate context at the correct sample rate
+          if (this.audioCtx.state !== 'closed') this.audioCtx.close();
+          this.audioCtx = null;
+        }
+      }
+
+      const ctx = this.getCtx();
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+
+      const numFrames = channels > 1 ? samples.length / channels : samples.length;
+      const audioBuf = ctx.createBuffer(1, numFrames, sampleRate);
+      const channelData = audioBuf.getChannelData(0);
+
+      if (channels === 1) {
+        channelData.set(samples);
+      } else {
+        // Downmix to mono
+        for (let i = 0; i < numFrames; i++) {
+          let sum = 0;
+          for (let ch = 0; ch < channels; ch++) {
+            sum += samples[i * channels + ch];
+          }
+          channelData[i] = sum / channels;
+        }
+      }
+
       const source = ctx.createBufferSource();
-      source.buffer = buf;
+      source.buffer = audioBuf;
       source.connect(this.masterGain!);
       const startAt = Math.max(ctx.currentTime + 0.005, this.scheduledEnd);
 
       // Fire onFirstAudio once — tells callers when the first audio chunk actually plays
       if (this.onFirstAudio) {
         const cb = this.onFirstAudio;
-        this.onFirstAudio = undefined; // auto-clear so it only fires once per playLine
+        this.onFirstAudio = undefined;
         cb(Date.now() + Math.round((startAt - ctx.currentTime) * 1000));
       }
 
-      this.scheduledEnd = startAt + buf.duration;
+      this.scheduledEnd = startAt + audioBuf.duration;
       source.start(startAt);
       this.activeNodes.push(source);
       this.lastEnded = new Promise<void>((resolve) => {
@@ -109,7 +215,10 @@ export class TTSPlayer {
           resolve();
         };
       });
-    } catch {}
+    } catch (err) {
+      if (err instanceof Error) console.error('[TTSPlayer] schedule error:', err.message);
+      else console.error('[TTSPlayer] schedule error:', err);
+    }
   }
 
   private waitForEnd(): Promise<void> {
@@ -201,7 +310,7 @@ export class TTSPlayer {
         const wavBuf = buf.slice(4, 4 + len).buffer;
         buf = buf.slice(4 + len);
         if (collectedChunks) collectedChunks.push(wavBuf.slice(0));
-        if (!abort.stop) await this.scheduleBuffer(wavBuf);
+        if (!abort.stop) this.scheduleBuffer(wavBuf);
       }
     }
 

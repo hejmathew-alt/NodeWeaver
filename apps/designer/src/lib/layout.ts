@@ -1,44 +1,92 @@
 /**
  * Graph layout helpers for the story canvas.
  *
- * autoLayout  — Dagre top-to-bottom hierarchical layout.
+ * autoLayout  — Dagre left-to-right hierarchical layout.
  * pushOverlaps — Collision resolution after a node drag.
  */
 
 import dagre from '@dagrejs/dagre';
 import type { Node, Edge } from '@xyflow/react';
 
-const GAP_X = 40; // horizontal gap between nodes
-const GAP_Y = 60; // vertical gap between nodes
+const GAP_X = 80; // horizontal gap between ranks (left-to-right spacing)
+const GAP_Y = 40; // vertical gap between sibling nodes in the same rank
 
 // ── Auto-layout (Dagre) ───────────────────────────────────────────────────────
 
 export function autoLayout(nodes: Node[], edges: Edge[]): Node[] {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'TB', nodesep: GAP_X, ranksep: GAP_Y });
+  g.setGraph({ rankdir: 'LR', nodesep: GAP_Y, ranksep: GAP_X });
 
   for (const node of nodes) {
-    const w = (node.style?.width as number | undefined) ?? 220;
+    const w = (node.style?.width as number | undefined) ?? 240;
     const h = (node.style?.height as number | undefined) ?? 120;
     g.setNode(node.id, { width: w, height: h });
   }
 
+  // Track which nodes have at least one edge so we can detect orphans later
+  const connectedIds = new Set<string>();
   for (const edge of edges) {
     g.setEdge(edge.source, edge.target);
+    connectedIds.add(edge.source);
+    connectedIds.add(edge.target);
   }
 
   dagre.layout(g);
 
+  // Snap spine nodes to a shared center Y so the main path forms a horizontal line.
+  const spineNodeIds = new Set(
+    nodes
+      .filter((n) => (n.data as Record<string, unknown>)?._isSpineNode === true)
+      .map((n) => n.id),
+  );
+
+  let centerY = 0;
+  if (spineNodeIds.size > 0) {
+    const spineYs = [...spineNodeIds]
+      .map((id) => g.node(id)?.y ?? 0)
+      .filter(isFinite)
+      .sort((a, b) => a - b);
+    centerY = spineYs[Math.floor(spineYs.length / 2)] ?? 0;
+  }
+
+  // Find the bottom of the connected graph so we can park orphan nodes below it
+  const connectedMaxY = nodes
+    .filter((n) => connectedIds.has(n.id))
+    .map((n) => {
+      const pos = g.node(n.id);
+      const h = (n.style?.height as number | undefined) ?? 120;
+      return pos && isFinite(pos.y) ? pos.y + h / 2 : 0;
+    })
+    .reduce((a, b) => Math.max(a, b), 0);
+
+  const orphanBaseY = connectedMaxY + 200;
+  let orphanX = 80;
+
   return nodes.map((node) => {
     const pos = g.node(node.id);
-    const w = (node.style?.width as number | undefined) ?? 220;
+    const w = (node.style?.width as number | undefined) ?? 240;
     const h = (node.style?.height as number | undefined) ?? 120;
+
+    // Disconnected nodes (no edges) — Dagre may cluster them at the same position.
+    // Place them in a dedicated row below the main graph instead.
+    if (!connectedIds.has(node.id)) {
+      const x = orphanX;
+      orphanX += w + GAP_X;
+      return { ...node, position: { x, y: orphanBaseY } };
+    }
+
+    // Guard against any Dagre positioning failure for connected nodes
+    if (!pos || !isFinite(pos.x) || !isFinite(pos.y)) {
+      return node;
+    }
+
+    const isSpine = spineNodeIds.size > 0 && spineNodeIds.has(node.id);
     return {
       ...node,
       position: {
         x: pos.x - w / 2,
-        y: pos.y - h / 2,
+        y: (isSpine ? centerY : pos.y) - h / 2,
       },
     };
   });
@@ -55,7 +103,7 @@ function toRect(node: Node): Rect {
     id: node.id,
     x: node.position.x,
     y: node.position.y,
-    w: (node.style?.width  as number | undefined) ?? 220,
+    w: (node.style?.width  as number | undefined) ?? 240,
     h: (node.style?.height as number | undefined) ?? 120,
   };
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { nanoid } from 'nanoid';
+import { DEBOUNCE_PERSIST } from '@/lib/constants';
 import type {
   NWVStory,
   NWVNode,
@@ -15,6 +16,7 @@ import type {
   NWVLoreEntry,
   NWVVFXKeyframe,
   NWVLane,
+  ActColumn,
   NodeType,
 } from '@nodeweaver/engine';
 import { db } from '@/lib/db';
@@ -65,6 +67,8 @@ interface StoryStore {
   avfxNodeId: string | null;
   avfxPlayheadMs: number;
   avfxBlockDurationsMs: number[];
+  /** Set when an auto-save PUT fails; cleared once the UI has displayed it */
+  persistError: string | null;
 
   // Load / persist
   loadStory: (id: string) => Promise<void>;
@@ -88,7 +92,7 @@ interface StoryStore {
   updateNode: (nodeId: string, patch: Partial<NWVNode>) => Promise<void>;
   createNode: (type: NodeType, position?: { x: number; y: number }) => string;
   deleteNode: (nodeId: string) => void;
-  undoDeleteNode: () => void;
+  undoCanvas: () => void;
   updateNodePosition: (nodeId: string, x: number, y: number) => void;
   batchUpdatePositions: (positions: { id: string; x: number; y: number }[]) => void;
 
@@ -155,12 +159,13 @@ interface StoryStore {
   updateLoreEntry: (id: string, patch: Partial<NWVLoreEntry>) => void;
   deleteLoreEntry: (id: string) => void;
 
-  // Lanes
-  addLane: () => string;
-  updateLane: (id: string, patch: Partial<NWVLane>) => void;
-  deleteLane: (id: string) => void;
-  assignNodeToLane: (nodeId: string, laneId: string) => void;
-  removeNodeFromLane: (nodeId: string, laneId: string) => void;
+  // Acts
+  addAct: (label?: string) => string;
+  updateAct: (id: string, patch: Partial<ActColumn>) => void;
+  deleteAct: (id: string) => void;
+  reorderActs: (fromIndex: number, toIndex: number) => void;
+  resizeAct: (id: string, newWorldWidth: number) => void;
+  setNodeAct: (nodeId: string, actId: string | undefined) => void;
 
   // AV FX mode
   setAVFXMode: (active: boolean) => void;
@@ -170,6 +175,7 @@ interface StoryStore {
   addVFXKeyframe: (nodeId: string, kf: NWVVFXKeyframe) => void;
   updateVFXKeyframe: (nodeId: string, kfId: string, patch: Partial<NWVVFXKeyframe>) => void;
   removeVFXKeyframe: (nodeId: string, kfId: string) => void;
+  clearPersistError: () => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -181,8 +187,10 @@ function stamp(story: NWVStory): NWVStory {
   };
 }
 
-// Debounced (300ms) — avoids flooding the server on every keystroke
+// Debounced — avoids flooding the server on every keystroke
 let _persistTimer: ReturnType<typeof setTimeout> | null = null;
+// Captured at store init so persist() can surface errors without a circular dep
+let _setError: ((msg: string) => void) | null = null;
 
 function persist(story: NWVStory): void {
   if (_persistTimer !== null) clearTimeout(_persistTimer);
@@ -192,8 +200,12 @@ function persist(story: NWVStory): void {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(story),
-    }).catch((err) => console.error('[story] persist error:', err));
-  }, 300);
+    }).catch((err) => {
+      const msg = err instanceof Error ? err.message : 'Auto-save failed';
+      console.error('[story] persist error:', err);
+      _setError?.(msg);
+    });
+  }, DEBOUNCE_PERSIST);
 }
 
 // Immediate write — used for explicit save actions (Cmd+S, saveStory)
@@ -211,7 +223,10 @@ async function persistNow(story: NWVStory): Promise<void> {
 
 // ── Store ────────────────────────────────────────────────────────────────────
 
-export const useStoryStore = create<StoryStore>((set, get) => ({
+export const useStoryStore = create<StoryStore>((set, get) => {
+  // Capture set so the module-level persist() can surface errors to the UI
+  _setError = (msg) => set({ persistError: msg });
+  return {
   activeStory: null,
   selectedNodeId: null,
   selectedPanel: null,
@@ -228,6 +243,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   avfxNodeId: null,
   avfxPlayheadMs: 0,
   avfxBlockDurationsMs: [],
+  persistError: null,
 
   // ── Load / persist ──────────────────────────────────────────────────────────
 
@@ -357,8 +373,9 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   },
 
   createNode: (type, position) => {
-    const { activeStory } = get();
+    const { activeStory, undoStack } = get();
     if (!activeStory) return '';
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const id = crypto.randomUUID();
     const pos = position ?? {
       x: 380 + Math.random() * 160 - 80,
@@ -396,6 +413,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     if (!activeStory) return;
     const target = activeStory.nodes.find((n) => n.id === nodeId);
     if (target?.locked) return;
+    if (target?.isRoot && !window.confirm('This is a Seed anchor node. Deleting it may break the planted story structure. Delete anyway?')) return;
     const updated = stamp({
       ...activeStory,
       nodes: activeStory.nodes
@@ -415,7 +433,7 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     persist(updated);
   },
 
-  undoDeleteNode: () => {
+  undoCanvas: () => {
     const { undoStack } = get();
     if (undoStack.length === 0) return;
     const previous = undoStack[undoStack.length - 1];
@@ -437,8 +455,9 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   },
 
   batchUpdatePositions: (positions) => {
-    const { activeStory } = get();
+    const { activeStory, undoStack } = get();
     if (!activeStory) return;
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const posMap = new Map(positions.map((p) => [p.id, p]));
     const updated = stamp({
       ...activeStory,
@@ -494,8 +513,9 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   },
 
   deleteChoice: (nodeId, choiceId) => {
-    const { activeStory } = get();
+    const { activeStory, undoStack } = get();
     if (!activeStory) return;
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const updated = stamp({
       ...activeStory,
       nodes: activeStory.nodes.map((n) =>
@@ -511,11 +531,12 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   // ── Connect ─────────────────────────────────────────────────────────────────
 
   connectNodes: (sourceNodeId, targetNodeId, sourceHandle?, targetHandle?) => {
-    const { activeStory, addChoice, updateChoice } = get();
+    const { activeStory, undoStack, addChoice, updateChoice } = get();
     if (!activeStory || sourceNodeId === targetNodeId) return;
     const source = activeStory.nodes.find((n) => n.id === sourceNodeId);
     if (!source) return;
     if (source.choices.some((c) => c.next === targetNodeId)) return;
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const choiceId = addChoice(sourceNodeId);
     const patch: Partial<NWVChoice> = { next: targetNodeId };
     if (sourceHandle) patch.sourceHandle = sourceHandle;
@@ -526,8 +547,9 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
   // ── Insert between ──────────────────────────────────────────────────────────
 
   insertNodeBetween: (sourceId, targetId, type) => {
-    const { activeStory } = get();
+    const { activeStory, undoStack } = get();
     if (!activeStory) return '';
+    set({ undoStack: [...undoStack.slice(-9), activeStory] });
     const source = activeStory.nodes.find((n) => n.id === sourceId);
     const target = activeStory.nodes.find((n) => n.id === targetId);
     if (!source || !target) return '';
@@ -1138,63 +1160,91 @@ export const useStoryStore = create<StoryStore>((set, get) => ({
     set({ activeStory: updated }); persist(updated);
   },
 
-  // ── Lane actions ─────────────────────────────────────────────────────────
+  // ── Act actions ──────────────────────────────────────────────────────────
 
-  addLane: () => {
+  addAct: (label) => {
     const { activeStory } = get();
     if (!activeStory) return '';
-    const PALETTE = ['#f43f5e', '#f59e0b', '#10b981', '#0ea5e9', '#8b5cf6', '#64748b', '#f97316', '#14b8a6'];
-    const colour = PALETTE[(activeStory.lanes ?? []).length % PALETTE.length];
-    const lane: NWVLane = { id: nanoid(), name: 'New Lane', colour, description: '' };
-    const updated = stamp({ ...activeStory, lanes: [...(activeStory.lanes ?? []), lane] });
+    const acts = [...(activeStory.acts ?? [])].sort((a, b) => a.order - b.order);
+    const lastAct = acts.at(-1);
+    const worldX = lastAct ? lastAct.worldX + lastAct.worldWidth : 0;
+    const order = acts.length;
+    const defaultLabel = label ?? `ACT ${order + 1}`;
+    const act: ActColumn = { id: nanoid(), label: defaultLabel, order, worldX, worldWidth: 600 };
+    const updated = stamp({ ...activeStory, acts: [...(activeStory.acts ?? []), act] });
     set({ activeStory: updated }); persist(updated);
-    return lane.id;
+    return act.id;
   },
 
-  updateLane: (id, patch) => {
+  updateAct: (id, patch) => {
     const { activeStory } = get();
     if (!activeStory) return;
     const updated = stamp({
       ...activeStory,
-      lanes: (activeStory.lanes ?? []).map((l) => l.id === id ? { ...l, ...patch } : l),
+      acts: (activeStory.acts ?? []).map((a) => a.id === id ? { ...a, ...patch } : a),
     });
     set({ activeStory: updated }); persist(updated);
   },
 
-  deleteLane: (id) => {
+  deleteAct: (id) => {
     const { activeStory } = get();
     if (!activeStory) return;
+    const remaining = (activeStory.acts ?? [])
+      .filter((a) => a.id !== id)
+      .sort((a, b) => a.order - b.order)
+      .map((a, i) => ({ ...a, order: i }));
     const updated = stamp({
       ...activeStory,
-      lanes: (activeStory.lanes ?? []).filter((l) => l.id !== id),
-      nodes: activeStory.nodes.map((n) => ({ ...n, lanes: (n.lanes ?? []).filter((lid) => lid !== id) })),
+      acts: remaining,
+      nodes: activeStory.nodes.map((n) => n.actId === id ? { ...n, actId: undefined } : n),
     });
     set({ activeStory: updated }); persist(updated);
   },
 
-  assignNodeToLane: (nodeId, laneId) => {
+  reorderActs: (fromIndex, toIndex) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const sorted = [...(activeStory.acts ?? [])].sort((a, b) => a.order - b.order);
+    const [moved] = sorted.splice(fromIndex, 1);
+    sorted.splice(toIndex, 0, moved);
+    // Recalculate worldX and order for all acts
+    let cursor = 0;
+    const reordered = sorted.map((a, i) => {
+      const next = { ...a, order: i, worldX: cursor };
+      cursor += a.worldWidth;
+      return next;
+    });
+    const updated = stamp({ ...activeStory, acts: reordered });
+    set({ activeStory: updated }); persist(updated);
+  },
+
+  resizeAct: (id, newWorldWidth) => {
+    const { activeStory } = get();
+    if (!activeStory) return;
+    const MIN_W = 150;
+    const sorted = [...(activeStory.acts ?? [])].sort((a, b) => a.order - b.order);
+    let cursor = 0;
+    const resized = sorted.map((a) => {
+      const w = a.id === id ? Math.max(MIN_W, newWorldWidth) : a.worldWidth;
+      const next = { ...a, worldX: cursor, worldWidth: w };
+      cursor += w;
+      return next;
+    });
+    const updated = stamp({ ...activeStory, acts: resized });
+    set({ activeStory: updated });
+    persist(updated);
+  },
+
+  setNodeAct: (nodeId, actId) => {
     const { activeStory } = get();
     if (!activeStory) return;
     const updated = stamp({
       ...activeStory,
-      nodes: activeStory.nodes.map((n) =>
-        n.id === nodeId && !(n.lanes ?? []).includes(laneId)
-          ? { ...n, lanes: [...(n.lanes ?? []), laneId] }
-          : n
-      ),
+      nodes: activeStory.nodes.map((n) => n.id === nodeId ? { ...n, actId } : n),
     });
     set({ activeStory: updated }); persist(updated);
   },
 
-  removeNodeFromLane: (nodeId, laneId) => {
-    const { activeStory } = get();
-    if (!activeStory) return;
-    const updated = stamp({
-      ...activeStory,
-      nodes: activeStory.nodes.map((n) =>
-        n.id === nodeId ? { ...n, lanes: (n.lanes ?? []).filter((lid) => lid !== laneId) } : n
-      ),
-    });
-    set({ activeStory: updated }); persist(updated);
-  },
-}));
+  clearPersistError: () => set({ persistError: null }),
+}});
+

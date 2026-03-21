@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { StoryCard } from '@/components/dashboard/StoryCard';
 import { QuickStartModal } from '@/components/dashboard/QuickStartModal';
 import { InspireModal } from '@/components/dashboard/InspireModal';
+import { SeedModal } from '@/components/dashboard/SeedModal';
 import { GlobalSettingsModal } from '@/components/dashboard/GlobalSettingsModal';
 import type { NWVStory, GenreSlug } from '@nodeweaver/engine';
 import { NARRATOR_DEFAULT } from '@/store/story';
@@ -72,6 +73,7 @@ export default function DashboardPage() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [showQuickStart, setShowQuickStart] = useState(false);
   const [showInspire, setShowInspire] = useState(false);
+  const [showSeed, setShowSeed] = useState(false);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newGenre, setNewGenre] = useState<GenreSlug>('sci-fi');
@@ -155,6 +157,12 @@ export default function DashboardPage() {
             />
           </label>
           <button
+            className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100"
+            onClick={() => setShowSeed(true)}
+          >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{display:'inline',verticalAlign:'middle',marginRight:5,marginBottom:1}}><line x1="7" y1="13" x2="7" y2="7"/><path d="M7 10C5 8 3 8 3 5C5 5 7 7 7 10"/><path d="M7 10C9 8 11 8 11 5C9 5 7 7 7 10"/></svg>Seed
+          </button>
+          <button
             className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 transition hover:bg-amber-100"
             onClick={() => setShowInspire(true)}
           >
@@ -199,6 +207,14 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Seed modal */}
+      {showSeed && (
+        <SeedModal
+          onClose={() => setShowSeed(false)}
+          onStoriesChanged={refreshStories}
+        />
+      )}
+
       {/* Global settings modal */}
       {showGlobalSettings && (
         <GlobalSettingsModal onClose={() => setShowGlobalSettings(false)} />
@@ -220,7 +236,7 @@ export default function DashboardPage() {
 
       {/* New story modal */}
       {showNewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
             <h2 className="mb-4 text-lg font-semibold text-slate-900">
               New Story

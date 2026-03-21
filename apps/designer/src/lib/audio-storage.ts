@@ -243,7 +243,8 @@ export async function readTimestampsServer(
   if (!res.ok) return null;
   try {
     return JSON.parse(await res.text()) as WordTimestamp[];
-  } catch {
+  } catch (err) {
+    console.warn('[audio-storage] Timestamp JSON corrupted or unreadable:', err);
     return null;
   }
 }

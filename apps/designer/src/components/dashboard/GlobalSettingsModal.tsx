@@ -25,7 +25,7 @@ export function GlobalSettingsModal({ onClose }: GlobalSettingsModalProps) {
   } = useSettingsStore();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
       <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-xl">
 
         {/* Header */}

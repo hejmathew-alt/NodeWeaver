@@ -1,61 +1,97 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
+import { useMemo } from 'react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { NWVNode } from '@nodeweaver/engine';
 import { useStoryStore } from '@/store/story';
 import { useSettingsStore, CANVAS_TEXT_CLASS } from '@/lib/settings';
 import { BlocksPreview } from './BlocksPreview';
 
-export function TwistNode({ id, data, selected }: NodeProps) {
+const AVATAR_COLORS = ['#f97316','#8b5cf6','#06b6d4','#ec4899','#10b981','#f59e0b','#3b82f6','#ef4444'];
+function nameToColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffff;
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
+
+export function TwistNode({ id, data }: NodeProps) {
   const node = data as unknown as NWVNode;
-  const updateNodeSize = useStoryStore((s) => s.updateNodeSize);
   const updateNode = useStoryStore((s) => s.updateNode);
   const setCanvasPlayNodeId = useStoryStore((s) => s.setCanvasPlayNodeId);
   const playingNodeId = useStoryStore((s) => s.playingNodeId);
   const visitedNodeIds = useStoryStore((s) => s.visitedNodeIds);
+  const selectedNodeId = useStoryStore((s) => s.selectedNodeId);
   const lanes = useStoryStore((s) => s.activeStory?.lanes ?? []);
+  const characters = useStoryStore((s) => s.activeStory?.characters ?? []);
+  const storyId = useStoryStore((s) => s.activeStory?.id ?? '');
   const isPlaying = id === playingNodeId;
+  const isSelected = id === selectedNodeId;
   const wasVisited = !isPlaying && visitedNodeIds.includes(id);
   const firstLaneColour = (node.lanes ?? []).length > 0
     ? lanes.find((l) => l.id === node.lanes[0])?.colour
     : undefined;
   const canvasTextSize = useSettingsStore((s) => s.canvasTextSize);
+  const isHighImpact = node.isHighImpact === true;
 
-  const [editTitle, setEditTitle] = useState(node.title ?? '');
-
-  useEffect(() => { setEditTitle(node.title ?? ''); }, [node.title]);
+  const avatarChars = useMemo(() => {
+    const seen = new Set<string>();
+    const result: typeof characters = [];
+    for (const b of node.blocks ?? []) {
+      if (b.characterId && b.characterId !== 'narrator' && !seen.has(b.characterId)) {
+        seen.add(b.characterId);
+        const char = characters.find((c) => c.id === b.characterId);
+        if (char) result.push(char);
+      }
+    }
+    return result;
+  }, [node.blocks, characters]);
+  const displayChars = avatarChars.slice(0, 4);
+  const overflow = avatarChars.length - displayChars.length;
 
   return (
     <div
-      className={`flex w-full h-full flex-col rounded-lg bg-white p-2 ${CANVAS_TEXT_CLASS[canvasTextSize]} shadow-md overflow-hidden transition-shadow ${
-        selected ? 'ring-2 ring-purple-400' : ''
-      }`}
+      className={`flex w-full h-full flex-col rounded-lg bg-white p-2 ${CANVAS_TEXT_CLASS[canvasTextSize]} shadow-md transition-all`}
       style={{
-        border: '1px dashed #a855f7',
-        borderLeft: firstLaneColour ? `3px solid ${firstLaneColour}` : '1px dashed #a855f7',
-        boxShadow: isPlaying
-          ? '0 0 0 4px rgba(168,85,247,1), 0 0 32px 8px rgba(168,85,247,0.55)'
-          : wasVisited ? '0 0 0 3px rgba(168,85,247,0.55), 0 0 14px rgba(168,85,247,0.35)' : undefined,
+        border: wasVisited
+          ? `1.5px solid ${firstLaneColour ?? '#a855f7'}99`
+          : isHighImpact
+          ? '1px dashed #f59e0b'
+          : '1px dashed #e2e8f0',
+        boxShadow: (isPlaying || isSelected)
+          ? `inset 4px 0 0 ${firstLaneColour ?? '#a855f7'}, 0 0 20px 6px ${firstLaneColour ?? '#a855f7'}44`
+          : wasVisited
+          ? `inset 4px 0 0 ${firstLaneColour ?? '#a855f7'}, 0 0 12px 4px ${firstLaneColour ?? '#a855f7'}33`
+          : isHighImpact
+          ? 'inset 4px 0 0 #f59e0b'
+          : `inset 4px 0 0 ${firstLaneColour ?? '#a855f7'}`,
         animation: isPlaying ? 'nodePulse 1.2s ease-in-out infinite' : undefined,
       }}
     >
-      <NodeResizer
-        color="#a855f7"
-        isVisible={selected}
-        minWidth={160}
-        minHeight={80}
-        onResizeEnd={(_, { width, height }) => updateNodeSize(id, width, height)}
-      />
-
       <Handle type="target" position={Position.Top} id="top" style={{ width: 10, height: 10 }} className="!bg-purple-400" />
       <Handle type="target" position={Position.Left} id="target-left" style={{ width: 10, height: 10 }} className="!bg-purple-400" />
       <Handle type="target" position={Position.Right} id="target-right" style={{ width: 10, height: 10 }} className="!bg-purple-400" />
 
-      <div className="mb-1 flex shrink-0 items-center gap-2">
-        <span className="rounded bg-purple-800 px-1.5 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
-          Twist
-        </span>
+      <div className="mb-1 flex shrink-0 items-center gap-1.5">
+        {displayChars.map((char, i) => (
+          <div key={char.id} title={char.name} className="shrink-0 rounded-full border border-white overflow-hidden"
+            style={{ width: 18, height: 18, marginLeft: i > 0 ? -5 : 0, position: 'relative' }}>
+            <div className="absolute inset-0 rounded-full flex items-center justify-center text-white font-bold"
+              style={{ fontSize: 6, backgroundColor: nameToColor(char.name) }}>
+              {char.name.charAt(0).toUpperCase()}
+            </div>
+            {char.avatarFile && (
+              <img src={`/api/stories/${storyId}/avatar?file=${char.avatarFile}`} alt={char.name}
+                className="absolute inset-0 w-full h-full object-cover rounded-full"
+                onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }} />
+            )}
+          </div>
+        ))}
+        {overflow > 0 && (
+          <div className="shrink-0 rounded-full border border-white flex items-center justify-center bg-slate-100 text-slate-500 font-semibold"
+            style={{ width: 18, height: 18, marginLeft: -5, fontSize: 6 }}>
+            +{overflow}
+          </div>
+        )}
         {isPlaying && (
           <span className="flex items-end gap-[2px]" style={{ height: 11 }}>
             {[0, 1, 2].map(i => (
@@ -64,6 +100,7 @@ export function TwistNode({ id, data, selected }: NodeProps) {
             ))}
           </span>
         )}
+        {isHighImpact && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">High Impact</span>}
         {node.status && <span className="text-xs text-slate-500">{node.status}</span>}
         <button
           className="nodrag ml-auto rounded px-1 py-0.5 text-[9px] text-slate-300 hover:bg-violet-50 hover:text-violet-600 transition-colors"
@@ -73,21 +110,21 @@ export function TwistNode({ id, data, selected }: NodeProps) {
         >▶</button>
       </div>
 
-      {selected ? (
+      {isSelected ? (
         <input
           className="mb-1 w-full shrink-0 bg-transparent font-semibold text-slate-900 placeholder-slate-400 focus:outline-none"
           placeholder="Twist title…"
-          value={editTitle}
-          onChange={(e) => setEditTitle(e.target.value)}
-          onBlur={() => { if (editTitle !== (node.title ?? '')) updateNode(id, { title: editTitle }); }}
+          value={node.title ?? ''}
+          onChange={(e) => updateNode(id, { title: e.target.value })}
         />
       ) : (
         node.title && <p className="mb-1 shrink-0 font-semibold text-slate-900">{node.title}</p>
       )}
 
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <BlocksPreview nodeId={id} blocks={node.blocks ?? []} />
-      </div>
+      {node.description && (
+        <p className="mb-1 shrink-0 text-[10px] text-slate-400 leading-snug line-clamp-2">{node.description}</p>
+      )}
+
 
       <Handle type="source" position={Position.Bottom} id="bottom" style={{ width: 10, height: 10 }} className="!bg-purple-400" />
       <Handle type="source" position={Position.Left} id="left" style={{ width: 10, height: 10 }} className="!bg-purple-400" />

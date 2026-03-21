@@ -37,13 +37,14 @@ function layoutNodes(nodes: NWVNode[]): NWVNode[] {
     if (!byLevel.has(level)) byLevel.set(level, []);
     byLevel.get(level)!.push(id);
   }
-  const NODE_W = 340, NODE_H = 230;
+  const NODE_W = 480, NODE_H = 320;
+  // L→R layout: x encodes depth (spine), y encodes sibling spread (branching)
   return nodes.map((n) => {
     const level = levels.get(n.id) ?? 0;
     const siblings = byLevel.get(level) ?? [n.id];
     const idx = siblings.indexOf(n.id);
-    const totalW = siblings.length * NODE_W;
-    return { ...n, position: { x: idx * NODE_W - totalW / 2 + NODE_W / 2 + 600, y: level * NODE_H + 80 } };
+    const totalH = siblings.length * NODE_H;
+    return { ...n, position: { x: level * NODE_W + 80, y: idx * NODE_H - totalH / 2 + NODE_H / 2 + 400 } };
   });
 }
 
@@ -55,7 +56,7 @@ function hydrateGeneratedStory(
 ): NWVStory {
   const now = new Date().toISOString();
   const meta = (raw.metadata ?? {}) as Record<string, unknown>;
-  const rawNodes = ((raw.nodes as NWVNode[]) ?? []).map((n) => ({ audio: [], lanes: [], ...n }));
+  const rawNodes = ((raw.nodes as NWVNode[]) ?? []).map((n) => ({ ...n, audio: n.audio ?? [], lanes: n.lanes ?? [] }));
   return {
     version: '1.0', id: storyId,
     metadata: {
@@ -306,7 +307,7 @@ export function WorldBuilderModal({ concept, genre, storyId, onClose, onStoriesC
   const stepItems = getStepItemCount(world, currentStep);
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
       <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white shadow-2xl flex flex-col max-h-[90vh]">
 
         {/* Header */}
